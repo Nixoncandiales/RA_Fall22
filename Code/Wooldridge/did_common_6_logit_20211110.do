@@ -1,5 +1,6 @@
 * Data generated to follow the logit model.
 
+cd "~/Documents/Github/RA_FALL22/Code/Wooldridge"
 use did_common_6_binary, clear
 
 log using did_common_6_binary, text replace

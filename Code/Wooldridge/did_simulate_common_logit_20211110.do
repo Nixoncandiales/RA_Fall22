@@ -1,5 +1,5 @@
 clear
-
+cd "~/Documents/Github/RA_FALL22/Code/Wooldridge"
 log using did_common_binary_1, text replace
 
 set seed 123

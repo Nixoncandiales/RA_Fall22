@@ -1,3 +1,5 @@
+clear
+cd "~/Documents/Github/RA_FALL22/Code/Wooldridge"
 log using did_staggered_6_corner, text replace
 use did_staggered_6_corner, clear
 
