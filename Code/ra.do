@@ -6,7 +6,7 @@ set linesize 132
 if `"`c(os)'"' == "MacOSX" & `"`c(username)'"' == "nix" cap cd "~/Documents/Github/RA_FALL22" 
 //Collaborator 1: MAC OS
 if `"`c(os)'"' == "Windows" & `"`c(username)'"' == "16083" cap cd "~/Documents/Github/RA_FALL22" 
- do Code/Replication_paper_SM
+* do Code/Replication_paper_SM
 
 use Data/analy_malp_paper_9_22.dta, clear
 
@@ -81,7 +81,8 @@ foreach v of varlist c* {
 * varlist of cohort dummies
 unab cohort : c*
 
-** Generate demeaned variables by cohort
+
+** Generate the demeaned variables conditioned by cohort
 
 foreach z in `cohort' {
 
@@ -97,131 +98,63 @@ foreach z in `cohort' {
 		}
 }
 
+unab prueba : `control_dm_c1'-`control_dm_c14'
+di "`prueba'"
 
 /* poisson */
 
-poisson malp_np i.w#c.c1#c.f1998 i.w#c.c1#c.f1999 i.w#c.c1#c.f2000 ///
-		i.w#c.c1#c.f2001 i.w#c.c1#c.f2002 i.w#c.c1#c.f2003 i.w#c.c1#c.f2004 ///
-		i.w#c.c1#c.f2005 i.w#c.c1#c.f2006 i.w#c.c1#c.f2007 i.w#c.c1#c.f2008 ///
-		i.w#c.c1#c.f2009 i.w#c.c1#c.f2010 i.w#c.c1#c.f2011 i.w#c.c1#c.f2012 ///
-		i.w#c.c1#c.f2013 i.w#c.c1#c.f2014 i.w#c.c1#c.f2015 i.w#c.c1#c.f2016 ///
-		i.w#c.c1#c.f2017 i.w#c.c1#c.f2018 i.w#c.c1#c.f2019 ///
-		///
-		i.w#c.c2#c.f2000 i.w#c.c2#c.f2001 i.w#c.c2#c.f2002 i.w#c.c2#c.f2003 ///
-		i.w#c.c2#c.f2004 i.w#c.c2#c.f2005 i.w#c.c2#c.f2006 i.w#c.c2#c.f2007 ///
-		i.w#c.c2#c.f2008 i.w#c.c2#c.f2009 i.w#c.c2#c.f2010 i.w#c.c2#c.f2011 ///
-		i.w#c.c2#c.f2012 i.w#c.c2#c.f2013 i.w#c.c2#c.f2014 i.w#c.c2#c.f2015 ///
-		i.w#c.c2#c.f2016 i.w#c.c2#c.f2017 i.w#c.c2#c.f2018 i.w#c.c2#c.f2019 ///
-		///
-		i.w#c.c3#c.f2005 i.w#c.c3#c.f2006 i.w#c.c3#c.f2007 i.w#c.c3#c.f2008 ///
-		i.w#c.c3#c.f2009 i.w#c.c3#c.f2010 i.w#c.c3#c.f2011 i.w#c.c3#c.f2012 ///
-		i.w#c.c3#c.f2013 i.w#c.c3#c.f2014 i.w#c.c3#c.f2015 i.w#c.c3#c.f2016 ///
-		i.w#c.c3#c.f2017 i.w#c.c3#c.f2018 i.w#c.c3#c.f2019 ///		
-		///
-		i.w#c.c4#c.f2006 i.w#c.c4#c.f2007 i.w#c.c4#c.f2008 i.w#c.c4#c.f2009 ///
-		i.w#c.c4#c.f2010 i.w#c.c4#c.f2011 i.w#c.c4#c.f2012 i.w#c.c4#c.f2013 ///
-		i.w#c.c4#c.f2014 i.w#c.c4#c.f2015 i.w#c.c4#c.f2016 i.w#c.c4#c.f2017 ///
-		i.w#c.c4#c.f2018 i.w#c.c4#c.f2019 ///		
-		///
-		i.w#c.c5#c.f2010 i.w#c.c5#c.f2011 i.w#c.c5#c.f2012 i.w#c.c5#c.f2013 ///
-		i.w#c.c5#c.f2014 i.w#c.c5#c.f2015 i.w#c.c5#c.f2016 i.w#c.c5#c.f2017 ///
-		i.w#c.c5#c.f2018 i.w#c.c5#c.f2019 ///
-		///
-		i.w#c.c6#c.f2011 i.w#c.c6#c.f2012 i.w#c.c6#c.f2013 i.w#c.c6#c.f2014 ///
-		i.w#c.c6#c.f2015 i.w#c.c6#c.f2016 i.w#c.c6#c.f2017 i.w#c.c6#c.f2018 ///
-		i.w#c.c6#c.f2019 ///
-		///
-		i.w#c.c7#c.f2012 i.w#c.c7#c.f2013 i.w#c.c7#c.f2014 i.w#c.c7#c.f2015 ///
-		i.w#c.c7#c.f2016 i.w#c.c7#c.f2017 i.w#c.c7#c.f2018 i.w#c.c7#c.f2019 ///
-		///
-		i.w#c.c8#c.f2013 i.w#c.c8#c.f2014 i.w#c.c8#c.f2015 i.w#c.c8#c.f2016 ///
-		i.w#c.c8#c.f2017 i.w#c.c8#c.f2018 i.w#c.c8#c.f2019 ///
-		///
-		i.w#c.c9#c.f2014 i.w#c.c9#c.f2015 i.w#c.c9#c.f2016 i.w#c.c9#c.f2017 ///
-		i.w#c.c9#c.f2018 i.w#c.c9#c.f2019 ///
-		///
-		i.w#c.c10#c.f2015 i.w#c.c10#c.f2016 i.w#c.c10#c.f2017 ///
-		i.w#c.c10#c.f2018 i.w#c.c10#c.f2019 ///
-		///
-		i.w#c.c11#c.f2016 i.w#c.c11#c.f2017 ///
-		i.w#c.c11#c.f2018 i.w#c.c11#c.f2019 ///
-		///
-		i.w#c.c12#c.f2018 i.w#c.c12#c.f2019 ///
-		///
-		i.w#c.c13#c.f2019 ///
-		i.w#c.c1#c.f1998#c.`control_dm_c1' i.w#c.c1#c.f1999#c.`control_dm_c1' i.w#c.c1#c.f2000#c.`control_dm_c1' ///
-		i.w#c.c1#c.f2001#c.`control_dm_c1' i.w#c.c1#c.f2002#c.`control_dm_c1' i.w#c.c1#c.f2003#c.`control_dm_c1' ///
-		i.w#c.c1#c.f2004#c.`control_dm_c1' i.w#c.c1#c.f2005#c.`control_dm_c1' i.w#c.c1#c.f2006#c.`control_dm_c1' ///
-		i.w#c.c1#c.f2007#c.`control_dm_c1' i.w#c.c1#c.f2008#c.`control_dm_c1' i.w#c.c1#c.f2009#c.`control_dm_c1' ///
-		i.w#c.c1#c.f2010#c.`control_dm_c1' i.w#c.c1#c.f2011#c.`control_dm_c1' i.w#c.c1#c.f2012#c.`control_dm_c1' ///
-		i.w#c.c1#c.f2013#c.`control_dm_c1' i.w#c.c1#c.f2014#c.`control_dm_c1' i.w#c.c1#c.f2015#c.`control_dm_c1' ///
-		i.w#c.c1#c.f2016#c.`control_dm_c1' i.w#c.c1#c.f2017#c.`control_dm_c1' i.w#c.c1#c.f2018#c.`control_dm_c1' ///
-		i.w#c.c1#c.f2019#c.`control_dm_c1' ///
-		///
-		i.w#c.c2#c.f2000#c.`control_dm_c2' i.w#c.c2#c.f2001#c.`control_dm_c2' i.w#c.c2#c.f2002#c.`control_dm_c2' ///
-		i.w#c.c2#c.f2003#c.`control_dm_c2' i.w#c.c2#c.f2004#c.`control_dm_c2' i.w#c.c2#c.f2005#c.`control_dm_c2' ///
-		i.w#c.c2#c.f2006#c.`control_dm_c2' i.w#c.c2#c.f2007#c.`control_dm_c2' i.w#c.c2#c.f2008#c.`control_dm_c2' ///
-		i.w#c.c2#c.f2009#c.`control_dm_c2' i.w#c.c2#c.f2010#c.`control_dm_c2' i.w#c.c2#c.f2011#c.`control_dm_c2' ///
-		i.w#c.c2#c.f2012#c.`control_dm_c2' i.w#c.c2#c.f2013#c.`control_dm_c2' i.w#c.c2#c.f2014#c.`control_dm_c2' ///
-		i.w#c.c2#c.f2015#c.`control_dm_c2' i.w#c.c2#c.f2016#c.`control_dm_c2' i.w#c.c2#c.f2017#c.`control_dm_c2' ///
-		i.w#c.c2#c.f2018#c.`control_dm_c2' i.w#c.c2#c.f2019#c.`control_dm_c2' ///
-		///
-		i.w#c.c3#c.f2005#c.`control_dm_c3' i.w#c.c3#c.f2006#c.`control_dm_c3' i.w#c.c3#c.f2007#c.`control_dm_c3' ///
-		i.w#c.c3#c.f2008#c.`control_dm_c3' i.w#c.c3#c.f2009#c.`control_dm_c3' i.w#c.c3#c.f2010#c.`control_dm_c3' ///
-		i.w#c.c3#c.f2011#c.`control_dm_c3' i.w#c.c3#c.f2012#c.`control_dm_c3' i.w#c.c3#c.f2013#c.`control_dm_c3' ///
-		i.w#c.c3#c.f2014#c.`control_dm_c3' i.w#c.c3#c.f2015#c.`control_dm_c3' i.w#c.c3#c.f2016#c.`control_dm_c3' 
-		i.w#c.c3#c.f2017#c.`control_dm_c3' i.w#c.c3#c.f2018#c.`control_dm_c3' i.w#c.c3#c.f2019#c.`control_dm_c3' /// When Running this part my computer stops working!!!!		
-		///
-		i.w#c.c4#c.f2006#c.`control_dm_c4' i.w#c.c4#c.f2007#c.`control_dm_c4' i.w#c.c4#c.f2008#c.`control_dm_c4' ///
-		i.w#c.c4#c.f2009#c.`control_dm_c4' i.w#c.c4#c.f2010#c.`control_dm_c4' i.w#c.c4#c.f2011#c.`control_dm_c4' ///
-		i.w#c.c4#c.f2012#c.`control_dm_c4' i.w#c.c4#c.f2013#c.`control_dm_c4' i.w#c.c4#c.f2014#c.`control_dm_c4' ///
-		i.w#c.c4#c.f2015#c.`control_dm_c4' i.w#c.c4#c.f2016#c.`control_dm_c4' i.w#c.c4#c.f2017#c.`control_dm_c4' ///
-		i.w#c.c4#c.f2018#c.`control_dm_c4' i.w#c.c4#c.f2019#c.`control_dm_c4' ///		
-		///
-		i.w#c.c5#c.f2010#c.`control_dm_c5' i.w#c.c5#c.f2011#c.`control_dm_c5' i.w#c.c5#c.f2012#c.`control_dm_c5' ///
-		i.w#c.c5#c.f2013#c.`control_dm_c5' i.w#c.c5#c.f2014#c.`control_dm_c5' i.w#c.c5#c.f2015#c.`control_dm_c5' ///
-		i.w#c.c5#c.f2016#c.`control_dm_c5' i.w#c.c5#c.f2017#c.`control_dm_c5' i.w#c.c5#c.f2018#c.`control_dm_c5' ///
-		i.w#c.c5#c.f2019#c.`control_dm_c5' ///
-		///
-		i.w#c.c6#c.f2011#c.`control_dm_c6' i.w#c.c6#c.f2012#c.`control_dm_c6' i.w#c.c6#c.f2013#c.`control_dm_c6' ///
-		i.w#c.c6#c.f2014#c.`control_dm_c6' i.w#c.c6#c.f2015#c.`control_dm_c6' i.w#c.c6#c.f2016#c.`control_dm_c6' ///
-		i.w#c.c6#c.f2017#c.`control_dm_c6' i.w#c.c6#c.f2018#c.`control_dm_c6' i.w#c.c6#c.f2019#c.`control_dm_c6' ///
-		///
-		i.w#c.c7#c.f2012#c.`control_dm_c7' i.w#c.c7#c.f2013#c.`control_dm_c7' i.w#c.c7#c.f2014#c.`control_dm_c7' ///
-		i.w#c.c7#c.f2015#c.`control_dm_c7' i.w#c.c7#c.f2016#c.`control_dm_c7' i.w#c.c7#c.f2017#c.`control_dm_c7' ///
-		i.w#c.c7#c.f2018#c.`control_dm_c7' i.w#c.c7#c.f2019#c.`control_dm_c7' ///
-		///
-		i.w#c.c8#c.f2013#c.`control_dm_c8' i.w#c.c8#c.f2014#c.`control_dm_c8' i.w#c.c8#c.f2015#c.`control_dm_c8' ///
-		i.w#c.c8#c.f2016#c.`control_dm_c8' i.w#c.c8#c.f2017#c.`control_dm_c8' i.w#c.c8#c.f2018#c.`control_dm_c8' ///
-		i.w#c.c8#c.f2019#c.`control_dm_c8' ///
-		///
-		i.w#c.c9#c.f2014#c.`control_dm_c9' i.w#c.c9#c.f2015#c.`control_dm_c9' i.w#c.c9#c.f2016#c.`control_dm_c9' ///
-		i.w#c.c9#c.f2017#c.`control_dm_c9' i.w#c.c9#c.f2018#c.`control_dm_c9' i.w#c.c9#c.f2019#c.`control_dm_c9' ///
-		///
-		i.w#c.c10#c.f2015#c.`control_dm_c10' i.w#c.c10#c.f2016#c.`control_dm_c10' i.w#c.c10#c.f2017#c.`control_dm_c10' ///
-		i.w#c.c10#c.f2018#c.`control_dm_c10' i.w#c.c10#c.f2019#c.`control_dm_c10' ///
-		///
-		i.w#c.c11#c.f2016#c.`control_dm_c11' i.w#c.c11#c.f2017#c.`control_dm_c11' ///
-		i.w#c.c11#c.f2018#c.`control_dm_c11' i.w#c.c11#c.f2019#c.`control_dm_c11' ///
-		///
-		i.w#c.c12#c.f2018#c.`control_dm_c12' i.w#c.c12#c.f2019#c.`control_dm_c12' ///
-		///
-		i.w#c.c13#c.f2019#c.`control_dm_c13' , vce(cluster stfips)
-		///
-		c.f c.f*#c.`control' c* c.c*#c.`control' c.`control'///	
-		
-		
-	*Wooldrige	
-poisson y i.w#c.d4#c.f04 i.w#c.d4#c.f05 i.w#c.d4#c.f06 ///
-	i.w#c.d5#c.f05 i.w#c.d5#c.f06 ///
-	i.w#c.d6#c.f06 ///
-	i.w#c.d4#c.f04#c.x i.w#c.d4#c.f05#c.x i.w#c.d4#c.f06#c.x ///
-	i.w#c.d5#c.f05#c.x i.w#c.d5#c.f06#c.x ///
-	i.w#c.d6#c.f06#c.x ///
-	f02 f03 f04 f05 f06 ///
-	c.f02#c.x c.f03#c.x c.f04#c.x c.f05#c.x c.f06#c.x ///
-	d4 d5 d6 x c.d4#c.x c.d5#c.x c.d6#c.x, noomitted vce(cluster id)
-	
+* Now with a covariate. The results are not the same, but the differences
+* in the estimated ATTs are minor in this application.
+* Also, the results change with full time dummies and full  
+* of time dummy interactions with covariates.
+
+xtpoisson malp_np w#c.c1#c.f1998-f2019 w#c.c2#c.f2000-f2019 w#c.c3#c.f2005-f2019 ///
+				w#c.c4#c.f2006-f2019 w#c.c5#c.f2010-f2019 w#c.c6#c.f2011-f2019 ///
+				w#c.c7#c.f2012-f2019 w#c.c8#c.f2013-f2019 w#c.c9#c.f2014-f2019 ///
+				w#c.c10#c.f2015-f2019 w#c.c11#c.f2016-f2019 w#c.c12#c.f2018-f2019 w#c.c13#c.f2019 ///
+				///
+				w#c.c1#c.f1998-f2019#c.`control_dm_c1' w#c.c2#c.f2000-f2019#c.`control_dm_c2' ///
+				w#c.c3#c.f2005-f2019#c.`control_dm_c3' w#c.c4#c.f2006-f2019#c.`control_dm_c4' /// 
+				w#c.c5#c.f2010-f2019#c.`control_dm_c5' w#c.c6#c.f2011-f2019#c.`control_dm_c6' /// 
+				w#c.c7#c.f2012-f2019#c.`control_dm_c7' w#c.c8#c.f2013-f2019#c.`control_dm_c8' ///
+				w#c.c9#c.f2014-f2019#c.`control_dm_c9' w#c.c10#c.f2015-f2019#c.`control_dm_c10' ///
+				w#c.c11#c.f2016-f2019#c.`control_dm_c11' w#c.c12#c.f2018-f2019#c.`control_dm_c12'/// 
+				w#c.c13#c.f2019#c.`control_dm_c13' ///
+				i.year i.year#c.`control', fe vce(cluster stfips)
+				
+poisson malp_np w#c.c1#c.f1998-f2019 w#c.c2#c.f2000-f2019 w#c.c3#c.f2005-f2019 ///
+				w#c.c4#c.f2006-f2019 w#c.c5#c.f2010-f2019 w#c.c6#c.f2011-f2019 ///
+				w#c.c7#c.f2012-f2019 w#c.c8#c.f2013-f2019 w#c.c9#c.f2014-f2019 ///
+				w#c.c10#c.f2015-f2019 w#c.c11#c.f2016-f2019 w#c.c12#c.f2018-f2019 w#c.c13#c.f2019 ///
+				///
+				w#c.c1#c.f1998-f2019#c.`control_dm_c1' w#c.c2#c.f2000-f2019#c.`control_dm_c2' ///
+				w#c.c3#c.f2005-f2019#c.`control_dm_c3' w#c.c4#c.f2006-f2019#c.`control_dm_c4' /// 
+				w#c.c5#c.f2010-f2019#c.`control_dm_c5' w#c.c6#c.f2011-f2019#c.`control_dm_c6' /// 
+				w#c.c7#c.f2012-f2019#c.`control_dm_c7' w#c.c8#c.f2013-f2019#c.`control_dm_c8' ///
+				w#c.c9#c.f2014-f2019#c.`control_dm_c9' w#c.c10#c.f2015-f2019#c.`control_dm_c10' ///
+				w#c.c11#c.f2016-f2019#c.`control_dm_c11' w#c.c12#c.f2018-f2019#c.`control_dm_c12'/// 
+				w#c.c13#c.f2019#c.`control_dm_c13' ///
+				i.year i.year#c.`control'///
+				`cohort' `control' c.c*#c.`control', vce(cluster stfips)			
+						
+				
+poisson malp_np w#c.c1#c.f1998-f2019 w#c.c2#c.f2000-f2019 w#c.c3#c.f2005-f2019 ///
+				w#c.c4#c.f2006-f2019 w#c.c5#c.f2010-f2019 w#c.c6#c.f2011-f2019 ///
+				w#c.c7#c.f2012-f2019 w#c.c8#c.f2013-f2019 w#c.c9#c.f2014-f2019 ///
+				w#c.c10#c.f2015-f2019 w#c.c11#c.f2016-f2019 w#c.c12#c.f2018-f2019 w#c.c13#c.f2019 ///
+				///
+				w#c.c1#c.f1998-f2019#c.`control_dm_c1' w#c.c2#c.f2000-f2019#c.`control_dm_c2' ///
+				w#c.c3#c.f2005-f2019#c.`control_dm_c3' w#c.c4#c.f2006-f2019#c.`control_dm_c4' /// 
+				w#c.c5#c.f2010-f2019#c.`control_dm_c5' w#c.c6#c.f2011-f2019#c.`control_dm_c6' /// 
+				w#c.c7#c.f2012-f2019#c.`control_dm_c7' w#c.c8#c.f2013-f2019#c.`control_dm_c8' ///
+				w#c.c9#c.f2014-f2019#c.`control_dm_c9' w#c.c10#c.f2015-f2019#c.`control_dm_c10' ///
+				w#c.c11#c.f2016-f2019#c.`control_dm_c11' w#c.c12#c.f2018-f2019#c.`control_dm_c12'/// 
+				w#c.c13#c.f2019#c.`control_dm_c13' ///
+				i.year i.year#c.`control'///
+				`cohort' `control' c.c*#c.`control' ///
+				c.c*#c.t c.c*#c.t#c.`control', vce(cluster stfips)			
+				
+*To do : Fix Margins 
 margins, dydx(w) at(d4 = 1 d5 = 0 d6 = 0 f02 = 0 f03 = 0 f04 = 1 f05 = 0 f06 = 0) ///
 	subpop(if d4 == 1) noestimcheck vce(uncond)
 margins, dydx(w) at(d4 = 1 d5 = 0 d6 = 0 f02 = 0 f03 = 0 f04 = 0 f05 = 1 f06 = 0) ///
