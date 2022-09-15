@@ -1,0 +1,3220 @@
+------------------------------------------------------------------------------------------------------------------------------------
+      name:  <unnamed>
+       log:  /Users/nix/Documents/GitHub/RA_Fall22/Logs/Replication_1.log
+  log type:  text
+ opened on:  15 Sep 2022, 12:17:38
+
+. 
+. /****** Loading the data ************/
+. use Data/analy_malp_paper_9_22.dta, clear
+
+. xtset stfips year // Declaring it as a Panel
+
+Panel variable: stfips (strongly balanced)
+ Time variable: year, 1998 to 2019
+         Delta: 1 unit
+
+. 
+. /* Define locals controls, torts, atorts */
+. local x pctpoverty unemp rpcinc
+
+. local torts jsl pcap necap apology
+
+. local atorts pcap necap apology
+
+. 
+. /****** Define variables as in Woldrige (2021) ************/
+. 
+. /* d=1 if recieve the treatment. */
+. gen d = (!missing(FPA_FULL_YEAR))
+
+. label variable d "=1 if treated"
+
+. 
+. /* p=1 if post-treatment time */
+. gen p = (pre==0)
+
+. label variable p "=1 if post-treatment period"
+
+. 
+. /* w=d*p */
+. gen w= (d*p)
+
+. label variable w "=1 if treated & in post-treatment period"
+
+. 
+. /* year indicators */
+. qui tab year, gen(f)
+
+. rename f# f#, renumber(1998) // starting year in 1998
+
+. unab i_year : f1* f2*           // varlist of year indicators
+
+. 
+. /* treatment cohort indicators */
+. qui tab FPA_FULL_YEAR, gen(c)
+
+. unab cohort : c*                        // varlist of cohort indicators
+
+. 
+. /* replacing missing values */
+. foreach v of varlist c* {
+  2.     qui replace `v' = 0 if `v' == .
+  3. }
+
+. 
+. 
+. /* Generate demeaned variables
+> Generate new variables centered around cohort means
+> Note to self:   THIS MUST BE DONE OVER CONSTANT VARIABLES !!! 
+>                                 That is the reason I had a problem with my attemp. 
+>                                 I was incluing a linear combination of the controls!!!!!!!!!
+>                                 As a result the algorithm was not converging 
+> 
+> forvalues i = 1/14 {
+>                 local x_dm`i'
+>                 local y "x_dm`i'"
+>                 foreach v in `x' {
+>                         sum `v' if c`i'
+>                         gen `v'_dm`i' = `v' - r(mean)
+>                         label variable `v'_dm`i' "`v' demeaned at cohort `i'"
+>                         local `y' `x_dm`i'' `v'_dm`i'
+>                 }
+> }
+> 
+> */
+. 
+. **# Main model - Poisson staggered entry case
+. 
+. /*  Estimate de model  
+> The first set of regresors are interactions between treatment,cohort and post-treatment indicators;
+> The second set of regresors are the interactions between treatment,cohort,post-treatment and controls centered around cohort means
+>  (CONSTANT CONTROLS) indicators;
+> The third set of regressors are indicators for year, cohort and interactions between year, cohort and controls.
+> */
+. 
+. qui poisson malp_np i.w#c.c1#c.f1998-f2019 i.w#c.c2#c.f2000-f2019 i.w#c.c3#c.f2005-f2019 ///
+>                                 i.w#c.c4#c.f2006-f2019 i.w#c.c5#c.f2010-f2019 i.w#c.c6#c.f2011-f2019 ///
+>                                 i.w#c.c7#c.f2012-f2019 i.w#c.c8#c.f2013-f2019 i.w#c.c9#c.f2014-f2019 ///
+>                                 i.w#c.c10#c.f2015-f2019 i.w#c.c11#c.f2016-f2019 i.w#c.c12#c.f2018-f2019 i.w#c.c13#c.f2019 ///
+>                                 `i_year' c.`i_year'#c.`x' ///
+>                                 `cohort' `x' c.c*#c.`x' , noomitted vce(cluster stfips)
+
+. estimates store model1
+
+.                                 /*      To include if we have constant controls over time
+>                                 ///
+>                                 w#c.c1#c.f1998-f2019#c.`x_dm1' w#c.c2#c.f2000-f2019#c.`x_dm2' ///
+>                                 w#c.c3#c.f2005-f2019#c.`x_dm3' w#c.c4#c.f2006-f2019#c.`x_dm4' /// 
+>                                 w#c.c5#c.f2010-f2019#c.`x_dm5' w#c.c6#c.f2011-f2019#c.`x_dm6' /// 
+>                                 w#c.c7#c.f2012-f2019#c.`x_dm7' w#c.c8#c.f2013-f2019#c.`x_dm8' ///
+>                                 w#c.c9#c.f2014-f2019#c.`x_dm9' w#c.c10#c.f2015-f2019#c.`x_dm10' ///
+>                                 w#c.c11#c.f2016-f2019#c.`x_dm11' w#c.c12#c.f2018-f2019#c.`x_dm12'/// 
+>                                 w#c.c13#c.f2019#c.`x_dm13' ///
+>                                 */
+.                                 
+. **# ATT 
+. /* To obtain ATTs using margins.
+> 
+> As in CS (2021) and Sun and Abraham (2021), the treatment effects to identify are the ATTs in periods 
+> where the cohorts are actually subjected to the intervention. <- ATT come from pooled Poisson.->
+> 
+> We have to include w explicitly. Also, have to 
+> set the cohort (c*)and year (i_year) indicators  accordingly
+> 
+> The following is the example provided by Wooldrige. Using Margins after possion 
+> estimates the ATT at the cohort q in time t.
+> 
+> margins, dydx(w) at(d4 = 1 d5 = 0 d6 = 0 f02 = 0 f03 = 0 f04 = 1 f05 = 0 f06 = 0) ///
+>         subpop(if d4 == 1) noestimcheck vce(uncond)
+> margins, dydx(w) at(d4 = 1 d5 = 0 d6 = 0 f02 = 0 f03 = 0 f04 = 0 f05 = 1 f06 = 0) ///
+>         subpop(if d4 == 1) noestimcheck vce(uncond)  
+> margins, dydx(w) at(d4 = 1 d5 = 0 d6 = 0 f02 = 0 f03 = 0 f04 = 0 f05 = 0 f06 = 1) ///
+>         subpop(if d4 == 1) noestimcheck vce(uncond) 
+> margins, dydx(w) at(d4 = 0 d5 = 1 d6 = 0 f02 = 0 f03 = 0 f04 = 0 f05 = 1 f06 = 0) ///
+>         subpop(if d5 == 1) noestimcheck vce(uncond)
+> margins, dydx(w) at(d4 = 0 d5 = 1 d6 = 0 f02 = 0 f03 = 0 f04 = 0 f05 = 0 f06 = 1) ///
+>         subpop(if d5 == 1) noestimcheck vce(uncond) 
+> margins, dydx(w) at(d4 = 0 d5 = 0 d6 = 1 f02 = 0 f03 = 0 f04 = 0 f05 = 0 f06 = 1) ///
+>         subpop(if d6 == 1) noestimcheck vce(uncond)
+>         
+> I tried to approach this ATT in a iterative way 
+> to get reproducible results. 
+> 
+> In a simpler way I generate some inteactions for the cohort q in time t and indclude those in the model. 
+> See next chunk. 
+> */
+. 
+. * Generate  the interactions
+. numlist "1/14"
+
+. local y1 = "`r(numlist)'"
+
+. 
+. local n : word count `y1'
+
+. levelsof FPA_FULL_YEAR, local(y2)
+1998 2000 2005 2006 2010 2011 2012 2013 2014 2015 2016 2018 2019 2021
+
+. 
+.  forvalues i = 1/`n' {
+  2.       local a : word `i' of `y1'
+  3.       local b : word `i' of `y2'
+  4.           forvalues j = `b'/2019{
+  5.                 qui gen c`a'f`j' = c`a'*f`j'
+  6.                 qui label variable c`a'f`j' "Cohort `a'"
+  7.           }
+  8.    }
+
+. 
+. * Estimate the model
+. qui poisson malp_np i.c1f* i.c2f* i.c3f* i.c4f* i.c5f* i.c6f* i.c7f* i.c8f* i.c9f* i.c10f* i.c11f* i.c12f* i.c13f* `i_year' ///
+>                                         c.`i_year'#c.`x' `cohort' `x' c.c*#c.`x' , noomitted vce(cluster stfips)
+
+.                                         /* To include if we have constant controls over time
+>                                         i.c1f*#c.x_dm1 i.c2f*#c.x_dm3 i.c3f*#c.x_dm3 .... and so on for the demeaned variables
+>                                         */
+. estimates store model2 //store the estimates
+
+. 
+. * Example How to get the ATT at cohort 13 at time 2019
+.         estimates restore model2
+(results model2 are active now)
+
+.         margins, dydx(1.c13f2019) subpop(if c13f2019== 1) noestimcheck vce(uncond) post 
+warning: prediction constant over observations.
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     1
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c13f2019
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+    c13f2019 |
+          0  |          0  (empty)
+          1  |   -.904258   .2178977    -4.15   0.000     -1.33133   -.4771863
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+
+.         scalar tau13_2019 = _b[1.c13f2019]
+
+.         di "tau13_2019 " tau13_2019
+tau13_2019 -.90425798
+
+.         
+. * Iterative approach to get the ATT over all cohorts and post-treatment period.
+.  forvalues i = 1/`n' {
+  2.       local a : word `i' of $y1
+  3.       local b : word `i' of $y2
+  4.           forvalues j = `b'/2019{
+  5.                 qui estimates restore model2
+  6.                 margins, dydx(1.c`a'f`j') subpop(if c`a'f`j'== 1) noestimcheck vce(uncond)
+  7.                 qui scalar tau`a'`j' = _b[1.c`a'f`j']
+  8.                 di "Estimating... tau`a'_`j'= " tau`a'`j'
+  9.           }
+ 10.    }
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     9
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c1f1998
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c1f1998 |
+          0  |          0  (empty)
+          1  |   .4222546   .7080522     0.60   0.551    -.9655022    1.810011
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau1_1998= 2.6428608
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     9
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c1f1999
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c1f1999 |
+          0  |          0  (empty)
+          1  |   .0308102   .9256647     0.03   0.973    -1.783459     1.84508
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau1_1999= -2.5545102
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     9
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c1f2000
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c1f2000 |
+          0  |          0  (empty)
+          1  |  -.3011765   1.096606    -0.27   0.784    -2.450485    1.848132
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau1_2000= -.22375018
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     9
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c1f2001
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c1f2001 |
+          0  |          0  (empty)
+          1  |  -.0128351    1.63221    -0.01   0.994    -3.211907    3.186237
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau1_2001= -1.3642405
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     9
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c1f2002
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c1f2002 |
+          0  |          0  (empty)
+          1  |  -.5331115   1.555141    -0.34   0.732    -3.581132    2.514909
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau1_2002= 1.398073
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     9
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c1f2003
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c1f2003 |
+          0  |          0  (empty)
+          1  |  -.3302213   2.118869    -0.16   0.876    -4.483128    3.822685
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau1_2003= -3.3174267
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     9
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c1f2004
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c1f2004 |
+          0  |          0  (empty)
+          1  |   .2666288   1.605504     0.17   0.868    -2.880102    3.413359
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau1_2004= -1.4317329
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     9
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c1f2005
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c1f2005 |
+          0  |          0  (empty)
+          1  |   .3344642   2.057663     0.16   0.871     -3.69848    4.367409
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau1_2005= -.78812921
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     9
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c1f2006
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c1f2006 |
+          0  |          0  (empty)
+          1  |   1.244892   2.219791     0.56   0.575    -3.105818    5.595603
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau1_2006= -.32384774
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     9
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c1f2007
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c1f2007 |
+          0  |          0  (empty)
+          1  |  -.2799484   2.147837    -0.13   0.896    -4.489632    3.929735
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau1_2007= -1.2977659
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     9
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c1f2008
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c1f2008 |
+          0  |          0  (empty)
+          1  |   .0845334   1.891561     0.04   0.964    -3.622858    3.791925
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau1_2008= 1.6756123
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     9
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c1f2009
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c1f2009 |
+          0  |          0  (empty)
+          1  |   .0143997   2.121993     0.01   0.995     -4.14463    4.173429
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau1_2009= -2.2377534
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     9
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c1f2010
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c1f2010 |
+          0  |          0  (empty)
+          1  |   .3162687   2.271487     0.14   0.889    -4.135765    4.768302
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau1_2010= -1.1333137
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     9
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c1f2011
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c1f2011 |
+          0  |          0  (empty)
+          1  |   1.269356   2.678906     0.47   0.636    -3.981203    6.519916
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau1_2011= -2.3351423
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     9
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c1f2012
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c1f2012 |
+          0  |          0  (empty)
+          1  |   .7008439   2.336666     0.30   0.764    -3.878936    5.280624
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau1_2012= -.39012805
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     9
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c1f2013
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c1f2013 |
+          0  |          0  (empty)
+          1  |   .6337229   2.842417     0.22   0.824    -4.937312    6.204758
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau1_2013= -2.4732379
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     9
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c1f2014
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c1f2014 |
+          0  |          0  (empty)
+          1  |   .3480667   2.772525     0.13   0.900    -5.085983    5.782117
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau1_2014= -1.5699743
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     9
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c1f2015
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c1f2015 |
+          0  |          0  (empty)
+          1  |  -.5289879   3.325904    -0.16   0.874     -7.04764    5.989664
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau1_2015= -1.5293324
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     9
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c1f2016
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c1f2016 |
+          0  |          0  (empty)
+          1  |  -.2688256   3.151851    -0.09   0.932     -6.44634    5.908689
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau1_2016= -.34793978
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     9
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c1f2017
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c1f2017 |
+          0  |          0  (empty)
+          1  |  -.1580089   2.929836    -0.05   0.957    -5.900382    5.584364
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau1_2017= -5.3447097
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     9
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c1f2018
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c1f2018 |
+          0  |          0  (empty)
+          1  |  -.2133135   2.052586    -0.10   0.917    -4.236307     3.80968
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau1_2018= -4.3125664
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     9
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c1f2019
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c1f2019 |
+          0  |          0  (empty)
+          1  |  -.1387909   .7999501    -0.17   0.862    -1.706664    1.429083
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau1_2019= -.34809494
+warning: prediction constant over observations.
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     1
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c2f2000
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c2f2000 |
+          0  |          0  (empty)
+          1  |   3.821264   .2958349    12.92   0.000     3.241438    4.401089
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau2_2000= 1.4450134
+warning: prediction constant over observations.
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     1
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c2f2001
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c2f2001 |
+          0  |          0  (empty)
+          1  |   1.820107   .3034696     6.00   0.000     1.225318    2.414897
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau2_2001= .60702644
+warning: prediction constant over observations.
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     1
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c2f2002
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c2f2002 |
+          0  |          0  (empty)
+          1  |  -.9355036   .5754905    -1.63   0.104    -2.063444    .1924371
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau2_2002= -.38373482
+warning: prediction constant over observations.
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     1
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c2f2003
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c2f2003 |
+          0  |          0  (empty)
+          1  |   2.555029   .4954199     5.16   0.000     1.584024    3.526034
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau2_2003= .55483595
+warning: prediction constant over observations.
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     1
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c2f2004
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c2f2004 |
+          0  |          0  (empty)
+          1  |   5.899071   .6111963     9.65   0.000     4.701148    7.096994
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau2_2004= 1.0654906
+warning: prediction constant over observations.
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     1
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c2f2005
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c2f2005 |
+          0  |          0  (empty)
+          1  |  -3.010346   .7239775    -4.16   0.000    -4.429316   -1.591376
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau2_2005= -1.3888636
+warning: prediction constant over observations.
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     1
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c2f2006
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c2f2006 |
+          0  |          0  (empty)
+          1  |  -.2369154    .498666    -0.48   0.635    -1.214283    .7404521
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau2_2006= -.0760091
+warning: prediction constant over observations.
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     1
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c2f2007
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c2f2007 |
+          0  |          0  (empty)
+          1  |  -.8098834   .7971145    -1.02   0.310    -2.372199    .7524323
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau2_2007= -.23898789
+warning: prediction constant over observations.
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     1
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c2f2008
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c2f2008 |
+          0  |          0  (empty)
+          1  |   2.342351   .8419858     2.78   0.005     .6920893    3.992613
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau2_2008= .40738452
+warning: prediction constant over observations.
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     1
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c2f2009
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c2f2009 |
+          0  |          0  (empty)
+          1  |  -2.551763   2.300172    -1.11   0.267    -7.060018    1.956491
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau2_2009= -.31080777
+warning: prediction constant over observations.
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     1
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c2f2010
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c2f2010 |
+          0  |          0  (empty)
+          1  |  -9.496866   5.072041    -1.87   0.061    -19.43788    .4441513
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau2_2010= -.94887164
+warning: prediction constant over observations.
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     1
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c2f2011
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c2f2011 |
+          0  |          0  (empty)
+          1  |  -23.31102    12.2521    -1.90   0.057    -47.32469    .7026546
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau2_2011= -1.9210038
+warning: prediction constant over observations.
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     1
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c2f2012
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c2f2012 |
+          0  |          0  (empty)
+          1  |  -16.33041   9.358088    -1.75   0.081    -34.67193    2.011105
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau2_2012= -1.2038269
+warning: prediction constant over observations.
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     1
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c2f2013
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c2f2013 |
+          0  |          0  (empty)
+          1  |  -20.62283    10.0408    -2.05   0.040    -40.30244   -.9432181
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau2_2013= -1.6340503
+warning: prediction constant over observations.
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     1
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c2f2014
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c2f2014 |
+          0  |          0  (empty)
+          1  |  -15.56258   9.311152    -1.67   0.095    -33.81211    2.686939
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau2_2014= -1.1703625
+warning: prediction constant over observations.
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     1
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c2f2015
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c2f2015 |
+          0  |          0  (empty)
+          1  |  -14.12911   6.557276    -2.15   0.031    -26.98114   -1.277086
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau2_2015= -1.2103999
+warning: prediction constant over observations.
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     1
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c2f2016
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c2f2016 |
+          0  |          0  (empty)
+          1  |  -2.792186   3.562492    -0.78   0.433    -9.774543     4.19017
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau2_2016= -.24624687
+warning: prediction constant over observations.
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     1
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c2f2017
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c2f2017 |
+          0  |          0  (empty)
+          1  |   6.350394   1.317591     4.82   0.000     3.767964    8.932825
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau2_2017= .75328858
+warning: prediction constant over observations.
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     1
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c2f2018
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c2f2018 |
+          0  |          0  (empty)
+          1  |  -2.124483   .6941531    -3.06   0.002    -3.484998   -.7639683
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau2_2018= -1.1392564
+warning: prediction constant over observations.
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     1
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c2f2019
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c2f2019 |
+          0  |          0  (empty)
+          1  |   1.923108   .2607333     7.38   0.000      1.41208    2.434136
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau2_2019= 1.0245467
+warning: prediction constant over observations.
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     1
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c3f2005
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c3f2005 |
+          0  |          0  (empty)
+          1  |   1.832007   .0599277    30.57   0.000     1.714551    1.949463
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau3_2005= 2.477082
+warning: prediction constant over observations.
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     1
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c3f2006
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c3f2006 |
+          0  |          0  (empty)
+          1  |  -.2319495   .0635926    -3.65   0.000    -.3565886   -.1073104
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau3_2006= -14.936138
+warning: prediction constant over observations.
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     1
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c3f2007
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c3f2007 |
+          0  |          0  (empty)
+          1  |   1.489056   .1180086    12.62   0.000     1.257763    1.720349
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau3_2007= 1.3646697
+warning: prediction constant over observations.
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     1
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c3f2008
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c3f2008 |
+          0  |          0  (empty)
+          1  |  -.3627439    .080825    -4.49   0.000     -.521158   -.2043298
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau3_2008= -15.383315
+warning: prediction constant over observations.
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     1
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c3f2009
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c3f2009 |
+          0  |          0  (empty)
+          1  |  -.0730826   .0346134    -2.11   0.035    -.1409237   -.0052415
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau3_2009= -13.781209
+warning: prediction constant over observations.
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     1
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c3f2010
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c3f2010 |
+          0  |          0  (empty)
+          1  |   .9720971   .0201893    48.15   0.000     .9325268    1.011667
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau3_2010= 3.5783789
+warning: prediction constant over observations.
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     1
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c3f2011
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c3f2011 |
+          0  |          0  (empty)
+          1  |  -.0161318   .0120075    -1.34   0.179    -.0396661    .0074025
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau3_2011= -12.270414
+warning: prediction constant over observations.
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     1
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c3f2012
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c3f2012 |
+          0  |          0  (empty)
+          1  |   .9769529   .0164233    59.49   0.000     .9447639    1.009142
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau3_2012= 3.7694329
+warning: prediction constant over observations.
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     1
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c3f2013
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c3f2013 |
+          0  |          0  (empty)
+          1  |  -.0351487    .021763    -1.62   0.106    -.0778035    .0075061
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau3_2013= -13.049208
+warning: prediction constant over observations.
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     1
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c3f2014
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c3f2014 |
+          0  |          0  (empty)
+          1  |   .9325507   .0351641    26.52   0.000     .8636304    1.001471
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau3_2014= 2.6961239
+warning: prediction constant over observations.
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     1
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c3f2015
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c3f2015 |
+          0  |          0  (empty)
+          1  |   2.908017   .0420801    69.11   0.000     2.825542    2.990493
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau3_2015= 3.4850023
+warning: prediction constant over observations.
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     1
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c3f2016
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c3f2016 |
+          0  |          0  (empty)
+          1  |   .8181437   .0689592    11.86   0.000     .6829862    .9533012
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau3_2016= 1.7044552
+warning: prediction constant over observations.
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     1
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c3f2017
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c3f2017 |
+          0  |          0  (empty)
+          1  |   3.625798   .0758243    47.82   0.000     3.477185    3.774411
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau3_2017= 2.3693456
+warning: prediction constant over observations.
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     1
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c3f2018
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c3f2018 |
+          0  |          0  (empty)
+          1  |   .4263367   .1218059     3.50   0.000     .1876015    .6650719
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau3_2018= .55569888
+warning: prediction constant over observations.
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     1
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c3f2019
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c3f2019 |
+          0  |          0  (empty)
+          1  |  -.4278975   .1475442    -2.90   0.004    -.7170788   -.1387162
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau3_2019= -15.548502
+warning: prediction constant over observations.
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     1
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c4f2006
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c4f2006 |
+          0  |          0  (empty)
+          1  |  -9.917258   1.202795    -8.25   0.000    -12.27469   -7.559823
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau4_2006= -2.3903281
+warning: prediction constant over observations.
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     1
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c4f2007
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c4f2007 |
+          0  |          0  (empty)
+          1  |  -8.495933   1.583017    -5.37   0.000    -11.59859   -5.393276
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau4_2007= -1.6578483
+warning: prediction constant over observations.
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     1
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c4f2008
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c4f2008 |
+          0  |          0  (empty)
+          1  |   -7.14702   1.360875    -5.25   0.000    -9.814286   -4.479755
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau4_2008= -1.5202884
+warning: prediction constant over observations.
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     1
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c4f2009
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c4f2009 |
+          0  |          0  (empty)
+          1  |  -12.37367   2.980767    -4.15   0.000    -18.21586    -6.53147
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau4_2009= -1.1191516
+warning: prediction constant over observations.
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     1
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c4f2010
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c4f2010 |
+          0  |          0  (empty)
+          1  |   -43.6069   9.314368    -4.68   0.000    -61.86273   -25.35108
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau4_2010= -3.1269209
+warning: prediction constant over observations.
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     1
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c4f2011
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c4f2011 |
+          0  |          0  (empty)
+          1  |   -60.4172   16.45668    -3.67   0.000     -92.6717   -28.16271
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau4_2011= -3.4407029
+warning: prediction constant over observations.
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     1
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c4f2012
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c4f2012 |
+          0  |          0  (empty)
+          1  |  -48.64977   12.26004    -3.97   0.000    -72.67901   -24.62053
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau4_2012= -3.2317966
+warning: prediction constant over observations.
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     1
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c4f2013
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c4f2013 |
+          0  |          0  (empty)
+          1  |   -75.0844   21.29579    -3.53   0.000    -116.8234   -33.34543
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau4_2013= -2.9842302
+warning: prediction constant over observations.
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     1
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c4f2014
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c4f2014 |
+          0  |          0  (empty)
+          1  |  -36.33518   11.38397    -3.19   0.001    -58.64734   -14.02301
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau4_2014= -1.5333071
+warning: prediction constant over observations.
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     1
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c4f2015
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c4f2015 |
+          0  |          0  (empty)
+          1  |  -25.95548   4.773348    -5.44   0.000    -35.31107   -16.59989
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau4_2015= -2.2671539
+warning: prediction constant over observations.
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     1
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c4f2016
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c4f2016 |
+          0  |          0  (empty)
+          1  |  -9.156667    2.35572    -3.89   0.000    -13.77379   -4.539541
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau4_2016= -.92667445
+warning: prediction constant over observations.
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     1
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c4f2017
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c4f2017 |
+          0  |          0  (empty)
+          1  |  -5.802921   1.972907    -2.94   0.003    -9.669748   -1.936093
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau4_2017= -.89639158
+warning: prediction constant over observations.
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     1
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c4f2018
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c4f2018 |
+          0  |          0  (empty)
+          1  |  -2.493305   .8737292    -2.85   0.004    -4.205783   -.7808275
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau4_2018= -.80944661
+warning: prediction constant over observations.
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     1
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c4f2019
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c4f2019 |
+          0  |          0  (empty)
+          1  |  -.3070248   .4673699    -0.66   0.511    -1.223053    .6090033
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau4_2019= -.26774906
+warning: prediction constant over observations.
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     1
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c5f2010
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c5f2010 |
+          0  |          0  (empty)
+          1  |   .8748375   .0322494    27.13   0.000     .8116298    .9380451
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau5_2010= 2.0780128
+warning: prediction constant over observations.
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     1
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c5f2011
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c5f2011 |
+          0  |          0  (empty)
+          1  |   .9101193   .0260864    34.89   0.000     .8589909    .9612477
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau5_2011= 2.409085
+warning: prediction constant over observations.
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     1
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c5f2012
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c5f2012 |
+          0  |          0  (empty)
+          1  |  -.0991906   .0282521    -3.51   0.000    -.1545636   -.0438176
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau5_2012= -14.086662
+warning: prediction constant over observations.
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     1
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c5f2013
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c5f2013 |
+          0  |          0  (empty)
+          1  |    1.86121   .0340652    54.64   0.000     1.794444    1.927977
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau5_2013= 2.6680671
+warning: prediction constant over observations.
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     1
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c5f2014
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c5f2014 |
+          0  |          0  (empty)
+          1  |  -.1343225   .0337751    -3.98   0.000    -.2005205   -.0681245
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau5_2014= -14.389862
+warning: prediction constant over observations.
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     1
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c5f2015
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c5f2015 |
+          0  |          0  (empty)
+          1  |   -.226454    .035146    -6.44   0.000    -.2953389    -.157569
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau5_2015= -14.91216
+warning: prediction constant over observations.
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     1
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c5f2016
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c5f2016 |
+          0  |          0  (empty)
+          1  |   1.655449   .0452579    36.58   0.000     1.566745    1.744153
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau5_2016= 1.758706
+warning: prediction constant over observations.
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     1
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c5f2017
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c5f2017 |
+          0  |          0  (empty)
+          1  |   .7271102   .0475125    15.30   0.000     .6339875    .8202329
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau5_2017= 1.2986378
+warning: prediction constant over observations.
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     1
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c5f2018
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c5f2018 |
+          0  |          0  (empty)
+          1  |  -.2422485   .0550835    -4.40   0.000    -.3502101   -.1342868
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau5_2018= -14.979582
+warning: prediction constant over observations.
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     1
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c5f2019
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c5f2019 |
+          0  |          0  (empty)
+          1  |  -.1014116   .0425331    -2.38   0.017    -.1847749   -.0180483
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau5_2019= -14.108805
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     3
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c6f2011
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c6f2011 |
+          0  |          0  (empty)
+          1  |   .5185134   1.145129     0.45   0.651    -1.725898    2.762925
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau6_2011= -.28713093
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     3
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c6f2012
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c6f2012 |
+          0  |          0  (empty)
+          1  |   .7920188   1.929921     0.41   0.682    -2.990557    4.574595
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau6_2012= 5.8497436
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     3
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c6f2013
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c6f2013 |
+          0  |          0  (empty)
+          1  |  -.5044859   .9533193    -0.53   0.597    -2.372957    1.363986
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau6_2013= .63705248
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     3
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c6f2014
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c6f2014 |
+          0  |          0  (empty)
+          1  |   .0643585   .7663585     0.08   0.933    -1.437677    1.566394
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau6_2014= -4.9496234
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     3
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c6f2015
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c6f2015 |
+          0  |          0  (empty)
+          1  |   .7780584   1.923518     0.40   0.686    -2.991968    4.548085
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau6_2015= 6.8550063
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     3
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c6f2016
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c6f2016 |
+          0  |          0  (empty)
+          1  |   1.263361    2.12541     0.59   0.552    -2.902365    5.429087
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau6_2016= 12.607613
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     3
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c6f2017
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c6f2017 |
+          0  |          0  (empty)
+          1  |  -.4869904   .7982262    -0.61   0.542    -2.051485    1.077504
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau6_2017= 11.625682
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     3
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c6f2018
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c6f2018 |
+          0  |          0  (empty)
+          1  |  -.1950649   .4215693    -0.46   0.644    -1.021326    .6311957
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau6_2018= 8.0827248
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     3
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c6f2019
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c6f2019 |
+          0  |          0  (empty)
+          1  |  -.0833082   .2805291    -0.30   0.766    -.6331351    .4665186
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau6_2019= 19.529773
+warning: prediction constant over observations.
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     1
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c7f2012
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c7f2012 |
+          0  |          0  (empty)
+          1  |  -.3177534   .1203524    -2.64   0.008    -.5536398    -.081867
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau7_2012= -15.250894
+warning: prediction constant over observations.
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     1
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c7f2013
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c7f2013 |
+          0  |          0  (empty)
+          1  |  -.4633691   .1124453    -4.12   0.000    -.6837579   -.2429804
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau7_2013= -15.628142
+warning: prediction constant over observations.
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     1
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c7f2014
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c7f2014 |
+          0  |          0  (empty)
+          1  |  -.3504562   .0955585    -3.67   0.000    -.5377473    -.163165
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau7_2014= -15.348854
+warning: prediction constant over observations.
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     1
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c7f2015
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c7f2015 |
+          0  |          0  (empty)
+          1  |   -.294258   .0587391    -5.01   0.000    -.4093846   -.1791314
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau7_2015= -15.174075
+warning: prediction constant over observations.
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     1
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c7f2016
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c7f2016 |
+          0  |          0  (empty)
+          1  |   1.759546   .0463354    37.97   0.000      1.66873    1.850362
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau7_2016= 2.1184429
+warning: prediction constant over observations.
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     1
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c7f2017
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c7f2017 |
+          0  |          0  (empty)
+          1  |   .8576798    .033484    25.61   0.000     .7920523    .9233072
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau7_2017= 1.9495643
+warning: prediction constant over observations.
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     1
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c7f2018
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c7f2018 |
+          0  |          0  (empty)
+          1  |  -.1563389   .0407634    -3.84   0.000    -.2362337    -.076444
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau7_2018= -14.541644
+warning: prediction constant over observations.
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     1
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c7f2019
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c7f2019 |
+          0  |          0  (empty)
+          1  |  -.0592976   .0205611    -2.88   0.004    -.0995967   -.0189985
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau7_2019= -13.572188
+warning: prediction constant over observations.
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     1
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c8f2013
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c8f2013 |
+          0  |          0  (empty)
+          1  |  -.3120981   .1620207    -1.93   0.054    -.6296528    .0054565
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau8_2013= -.27162309
+warning: prediction constant over observations.
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     1
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c8f2014
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c8f2014 |
+          0  |          0  (empty)
+          1  |  -.2719151   .2059681    -1.32   0.187    -.6756052    .1317749
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau8_2014= -.24051978
+warning: prediction constant over observations.
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     1
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c8f2015
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c8f2015 |
+          0  |          0  (empty)
+          1  |   .5153739   .3113819     1.66   0.098    -.0949235    1.125671
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau8_2015= .29798746
+warning: prediction constant over observations.
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     1
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c8f2016
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c8f2016 |
+          0  |          0  (empty)
+          1  |  -1.387126   .2672593    -5.19   0.000    -1.910945   -.8633078
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau8_2016= -16.724607
+warning: prediction constant over observations.
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     1
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c8f2017
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c8f2017 |
+          0  |          0  (empty)
+          1  |  -1.099108   .1936685    -5.68   0.000    -1.478691   -.7195245
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau8_2017= -16.491872
+warning: prediction constant over observations.
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     1
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c8f2018
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c8f2018 |
+          0  |          0  (empty)
+          1  |   .2041979   .1961328     1.04   0.298    -.1802154    .5886112
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau8_2018= .22840001
+warning: prediction constant over observations.
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     1
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c8f2019
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c8f2019 |
+          0  |          0  (empty)
+          1  |  -.3371414   .0911997    -3.70   0.000    -.5158896   -.1583932
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau8_2019= -15.31012
+warning: prediction constant over observations.
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     1
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c9f2014
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c9f2014 |
+          0  |          0  (empty)
+          1  |    3.19748   .1685192    18.97   0.000     2.867188    3.527772
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau9_2014= 1.6063302
+warning: prediction constant over observations.
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     1
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c9f2015
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c9f2015 |
+          0  |          0  (empty)
+          1  |   2.965445   .2334069    12.71   0.000     2.507975    3.422914
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau9_2015= 1.3523495
+warning: prediction constant over observations.
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     1
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c9f2016
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c9f2016 |
+          0  |          0  (empty)
+          1  |   .0077329   .2376053     0.03   0.974    -.4579649    .4734307
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau9_2016= .00776281
+warning: prediction constant over observations.
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     1
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c9f2017
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c9f2017 |
+          0  |          0  (empty)
+          1  |   2.166571   .1631563    13.28   0.000      1.84679    2.486351
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau9_2017= 1.2808379
+warning: prediction constant over observations.
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     1
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c9f2018
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c9f2018 |
+          0  |          0  (empty)
+          1  |   .3563996   .1611483     2.21   0.027     .0405548    .6722444
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau9_2018= .44066697
+warning: prediction constant over observations.
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     1
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c9f2019
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     c9f2019 |
+          0  |          0  (empty)
+          1  |     .72783   .0793113     9.18   0.000     .5723828    .8832773
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau9_2019= 1.3012791
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     4
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c10f2015
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+    c10f2015 |
+          0  |          0  (empty)
+          1  |  -3.950873   2.987228    -1.32   0.186    -9.805733    1.903987
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau10_2015= -2.594126
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     4
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c10f2016
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+    c10f2016 |
+          0  |          0  (empty)
+          1  |  -3.401909   3.197699    -1.06   0.287    -9.669283    2.865466
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau10_2016= -.48092385
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     4
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c10f2017
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+    c10f2017 |
+          0  |          0  (empty)
+          1  |  -2.125195   2.316147    -0.92   0.359    -6.664759    2.414369
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau10_2017= -1.3619692
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     4
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c10f2018
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+    c10f2018 |
+          0  |          0  (empty)
+          1  |  -.1385591   1.361252    -0.10   0.919    -2.806564    2.529446
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau10_2018= 3.2021562
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     4
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c10f2019
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+    c10f2019 |
+          0  |          0  (empty)
+          1  |  -.5896382   .8183015    -0.72   0.471     -2.19348    1.014203
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau10_2019= 7.7597058
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     3
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c11f2016
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+    c11f2016 |
+          0  |          0  (empty)
+          1  |   .4394352    .452561     0.97   0.332    -.4475682    1.326439
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau11_2016= -.59462101
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     3
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c11f2017
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+    c11f2017 |
+          0  |          0  (empty)
+          1  |   .2959653    .585916     0.51   0.613    -.8524089    1.444339
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau11_2017= -1.5536886
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     3
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c11f2018
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+    c11f2018 |
+          0  |          0  (empty)
+          1  |  -.3971978   .2666485    -1.49   0.136    -.9198194    .1254237
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau11_2018= -49.604659
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     3
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c11f2019
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+    c11f2019 |
+          0  |          0  (empty)
+          1  |   .0591559   .2468393     0.24   0.811    -.4246402     .542952
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau11_2019= 54.891931
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     2
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c12f2018
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+    c12f2018 |
+          0  |          0  (empty)
+          1  |   1.289433   .3965216     3.25   0.001     .5122646    2.066601
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau12_2018= -2.1195261
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     2
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c12f2019
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+    c12f2019 |
+          0  |          0  (empty)
+          1  |  -.6948989   .3374099    -2.06   0.039     -1.35621   -.0335875
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau12_2019= -20.407864
+warning: prediction constant over observations.
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =     1
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c13f2019
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+    c13f2019 |
+          0  |          0  (empty)
+          1  |   -.904258   .2178977    -4.15   0.000     -1.33133   -.4771863
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+Estimating... tau13_2019= -16.296732
+
+. /*
+> Currently I am not capturing the correct ATT. When retrievining it from the margins output
+> I am not linking the correct estimand. Thus, I can not construct the table yet. Still need to work a bit on this
+> */
+.    
+.    
+. 
+. **# Desired Output
+. /* Goal 
+> The Output goal of this do-file is Implementing Two-Way Fixed Effects,                                                  
+>         the Two-Way Mundlak Regression,                                                         
+>         and Difference-in-Differences Estimators proposed by Wooldrige (2021)
+> 
+>         That is Estimate the ATT por cohort and post-treatment and present the results in a table. 
+>         ALso, include code to do a linear combinates of the ATT to get a unique effect (ATE? not sure)
+> */
+. estimates restore model2
+(results model2 are active now)
+
+. forvalues i = 1/13 {
+  2.         
+.         foreach var in c`i'f*   {
+  3.                 estimates restore model2
+  4.                  margins, dydx(1.`var') subpop(if c`i'== 1) noestimcheck vce(uncond)
+  5.         }               
+  6. }               
+(results model2 are active now)
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =   198
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c1f1998 1.c1f1999 1.c1f2000 1.c1f2001 1.c1f2002 1.c1f2003 1.c1f2004 1.c1f2005 1.c1f2006 1.c1f2007 1.c1f2008
+            1.c1f2009 1.c1f2010 1.c1f2011 1.c1f2012 1.c1f2013 1.c1f2014 1.c1f2015 1.c1f2016 1.c1f2017 1.c1f2018 1.c1f2019
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+   1.c1f1998 |   .5329444   2.516901     0.21   0.832    -4.400091     5.46598
+   1.c1f1999 |   1.052724   5.784941     0.18   0.856    -10.28555      12.391
+   1.c1f2000 |  -.5825477   1.143951    -0.51   0.611    -2.824651    1.659555
+   1.c1f2001 |    .487285   3.988306     0.12   0.903    -7.329651    8.304221
+   1.c1f2002 |  -.8912917   .5553931    -1.60   0.109    -1.979842    .1972588
+   1.c1f2003 |   .3782053     4.2397     0.09   0.929    -7.931454    8.687864
+   1.c1f2004 |   .9147797   5.173828     0.18   0.860    -9.225736     11.0553
+   1.c1f2005 |   .5799567   3.904567     0.15   0.882    -7.072854    8.232767
+   1.c1f2006 |   1.936021   6.883154     0.28   0.779    -11.55471    15.42676
+   1.c1f2007 |  -.0744375   2.779286    -0.03   0.979    -5.521737    5.372862
+   1.c1f2008 |  -.1974147   1.538399    -0.13   0.898    -3.212622    2.817793
+   1.c1f2009 |   .3676104    4.03897     0.09   0.927    -7.548626    8.283846
+   1.c1f2010 |   .4015434   3.636401     0.11   0.912    -6.725671    7.528758
+   1.c1f2011 |   1.116993   5.426572     0.21   0.837    -9.518892    11.75288
+   1.c1f2012 |   .7088927   3.946728     0.18   0.857    -7.026552    8.444338
+   1.c1f2013 |   .5694991   4.150501     0.14   0.891    -7.565333    8.704331
+   1.c1f2014 |    .402649   3.603802     0.11   0.911    -6.660673    7.465971
+   1.c1f2015 |  -.2584664   2.211664    -0.12   0.907    -4.593248    4.076315
+   1.c1f2016 |    -.16049   2.157383    -0.07   0.941    -4.388882    4.067902
+   1.c1f2017 |   1.221253   7.112706     0.17   0.864     -12.7194     15.1619
+   1.c1f2018 |   .9503709   6.139076     0.15   0.877      -11.082    12.98274
+   1.c1f2019 |  -.3700589   1.566719    -0.24   0.813    -3.440772    2.700654
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+(results model2 are active now)
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =    22
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c2f2000 1.c2f2001 1.c2f2002 1.c2f2003 1.c2f2004 1.c2f2005 1.c2f2006 1.c2f2007 1.c2f2008 1.c2f2009 1.c2f2010
+            1.c2f2011 1.c2f2012 1.c2f2013 1.c2f2014 1.c2f2015 1.c2f2016 1.c2f2017 1.c2f2018 1.c2f2019
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+   1.c2f2000 |   15.79402   5.143169     3.07   0.002     5.713594    25.87444
+   1.c2f2001 |   4.143764   1.256255     3.30   0.001     1.681549    6.605979
+   1.c2f2002 |  -1.621498   .6879394    -2.36   0.018    -2.969834   -.2731617
+   1.c2f2003 |   3.655903   1.217922     3.00   0.003      1.26882    6.042985
+   1.c2f2004 |   9.087833   2.679866     3.39   0.001     3.835393    14.34027
+   1.c2f2005 |   -3.89009   .2579902   -15.08   0.000    -4.395742   -3.384439
+   1.c2f2006 |  -.3700811   .7236022    -0.51   0.609    -1.788315    1.048153
+   1.c2f2007 |   -1.08038    .845007    -1.28   0.201    -2.736563    .5758033
+   1.c2f2008 |   2.483759   1.322551     1.88   0.060    -.1083942    5.075912
+   1.c2f2009 |  -1.378873   .9388128    -1.47   0.142    -3.218912    .4611663
+   1.c2f2010 |  -3.356548   .8353583    -4.02   0.000    -4.993821   -1.719276
+   1.c2f2011 |  -5.210958   .8764784    -5.95   0.000    -6.928824   -3.493092
+   1.c2f2012 |  -4.051215    .994301    -4.07   0.000    -6.000009   -2.102421
+   1.c2f2013 |  -4.815429   .8248445    -5.84   0.000    -6.432094   -3.198763
+   1.c2f2014 |  -3.968045   1.028498    -3.86   0.000    -5.983863   -1.952226
+   1.c2f2015 |  -3.992359   .7615047    -5.24   0.000     -5.48488   -2.499837
+   1.c2f2016 |  -1.128992   1.161393    -0.97   0.331     -3.40528    1.147296
+   1.c2f2017 |   5.346591   2.288851     2.34   0.019     .8605266    9.832656
+   1.c2f2018 |  -3.496327   .3870834    -9.03   0.000    -4.254997   -2.737658
+   1.c2f2019 |   8.854347   3.323128     2.66   0.008     2.341137    15.36756
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+(results model2 are active now)
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =    22
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c3f2005 1.c3f2006 1.c3f2007 1.c3f2008 1.c3f2009 1.c3f2010 1.c3f2011 1.c3f2012 1.c3f2013 1.c3f2014 1.c3f2015
+            1.c3f2016 1.c3f2017 1.c3f2018 1.c3f2019
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+   1.c3f2005 |   9.006816   3.478229     2.59   0.010     2.189612    15.82402
+   1.c3f2006 |  -.9196391   .0028907  -318.13   0.000    -.9253049   -.9139734
+   1.c3f2007 |   2.452236   .7451016     3.29   0.001     .9918635    3.912608
+   1.c3f2008 |  -.9255844    .003674  -251.93   0.000    -.9327853   -.9183835
+   1.c3f2009 |  -.9124173   .0015739  -579.71   0.000    -.9155021   -.9093324
+   1.c3f2010 |   30.11222   22.36737     1.35   0.178    -13.72702    73.95146
+   1.c3f2011 |  -.9098253    .000549 -1657.23   0.000    -.9109013   -.9087492
+   1.c3f2012 |   36.62432   26.66241     1.37   0.170    -15.63304    88.88168
+   1.c3f2013 |   -.910692   .0009906  -919.38   0.000    -.9126334   -.9087505
+   1.c3f2014 |   11.97978   6.673565     1.80   0.073     -1.10017    25.05973
+   1.c3f2015 |   24.56795   11.53686     2.13   0.033     1.956132    47.17977
+   1.c3f2016 |   3.922181   1.803624     2.17   0.030     .3871438    7.457218
+   1.c3f2017 |   7.212436   1.579014     4.57   0.000     4.117625    10.30725
+   1.c3f2018 |   .6612013   .3251812     2.03   0.042     .0238579    1.298545
+   1.c3f2019 |   -.928546   .0067066  -138.45   0.000    -.9416906   -.9154014
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+(results model2 are active now)
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =    22
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c4f2006 1.c4f2007 1.c4f2008 1.c4f2009 1.c4f2010 1.c4f2011 1.c4f2012 1.c4f2013 1.c4f2014 1.c4f2015 1.c4f2016
+            1.c4f2017 1.c4f2018 1.c4f2019
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+   1.c4f2006 |  -4.167007   .0959605   -43.42   0.000    -4.355086   -3.978928
+   1.c4f2007 |  -3.660814   .1882195   -19.45   0.000    -4.029717   -3.291911
+   1.c4f2008 |   -3.48582   .1934589   -18.02   0.000    -3.864993   -3.106648
+   1.c4f2009 |  -3.164407   .3401781    -9.30   0.000    -3.831144    -2.49767
+   1.c4f2010 |  -5.850225   .4596189   -12.73   0.000    -6.751062   -4.949389
+   1.c4f2011 |  -6.662109   .7822138    -8.52   0.000     -8.19522   -5.128998
+   1.c4f2012 |   -6.09711   .5959472   -10.23   0.000    -7.265145   -4.929075
+   1.c4f2013 |  -7.167501   1.021857    -7.01   0.000    -9.170305   -5.164698
+   1.c4f2014 |  -4.538835   .7126834    -6.37   0.000    -5.935668   -3.142001
+   1.c4f2015 |  -4.765408   .2852937   -16.70   0.000    -5.324574   -4.206243
+   1.c4f2016 |  -2.750383   .3448005    -7.98   0.000     -3.42618   -2.074587
+   1.c4f2017 |  -2.604731   .4144329    -6.29   0.000    -3.417005   -1.792458
+   1.c4f2018 |  -2.358162   .3898573    -6.05   0.000    -3.122268   -1.594056
+   1.c4f2019 |  -.9749213   1.140458    -0.85   0.393    -3.210179    1.260336
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+(results model2 are active now)
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =    22
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c5f2010 1.c5f2011 1.c5f2012 1.c5f2013 1.c5f2014 1.c5f2015 1.c5f2016 1.c5f2017 1.c5f2018 1.c5f2019
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+   1.c5f2010 |   2.581081   .7498476     3.44   0.001     1.111406    4.050755
+   1.c5f2011 |   3.722764   1.174952     3.17   0.002     1.419899    6.025628
+   1.c5f2012 |  -.4136021   .0012843  -322.05   0.000    -.4161193    -.411085
+   1.c5f2013 |   4.352132   1.127235     3.86   0.000     2.142792    6.561472
+   1.c5f2014 |  -.4151991   .0015353  -270.43   0.000    -.4182083     -.41219
+   1.c5f2015 |   -.419387   .0015976  -262.51   0.000    -.4225182   -.4162558
+   1.c5f2016 |   1.604104   .2446856     6.56   0.000     1.124529    2.083679
+   1.c5f2017 |   1.001893   .2341402     4.28   0.000     .5429865    1.460799
+   1.c5f2018 |   -.420105   .0025038  -167.79   0.000    -.4250124   -.4151976
+   1.c5f2019 |  -.4137031   .0019334  -213.97   0.000    -.4174926   -.4099136
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+(results model2 are active now)
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =    66
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c6f2011 1.c6f2012 1.c6f2013 1.c6f2014 1.c6f2015 1.c6f2016 1.c6f2017 1.c6f2018 1.c6f2019
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+   1.c6f2011 |   .3264674   .8656136     0.38   0.706    -1.370104    2.023039
+   1.c6f2012 |    4.24098   4.339495     0.98   0.328    -4.264275    12.74623
+   1.c6f2013 |  -.2274471   .8972544    -0.25   0.800    -1.986033    1.531139
+   1.c6f2014 |  -.6416398   .6863625    -0.93   0.350    -1.986886    .7036061
+   1.c6f2015 |    2.04863   3.779068     0.54   0.588    -5.358207    9.455467
+   1.c6f2016 |   6.602116   6.330698     1.04   0.297    -5.805825    19.01006
+   1.c6f2017 |    1.10954   2.315365     0.48   0.632    -3.428492    5.647572
+   1.c6f2018 |  -.1081492   .8834382    -0.12   0.903    -1.839656    1.623358
+   1.c6f2019 |    2.07021   3.951034     0.52   0.600    -5.673674    9.814094
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+(results model2 are active now)
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =    22
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c7f2012 1.c7f2013 1.c7f2014 1.c7f2015 1.c7f2016 1.c7f2017 1.c7f2018 1.c7f2019
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+   1.c7f2012 |  -.3326287   .0054706   -60.80   0.000    -.3433509   -.3219064
+   1.c7f2013 |  -.3392476   .0051112   -66.37   0.000    -.3492653   -.3292298
+   1.c7f2014 |  -.3341152   .0043436   -76.92   0.000    -.3426285   -.3256018
+   1.c7f2015 |  -.3315607     .00267  -124.18   0.000    -.3367938   -.3263275
+   1.c7f2016 |   1.743233   .3664379     4.76   0.000     1.025028    2.461439
+   1.c7f2017 |   1.682354   .4522708     3.72   0.000       .79592    2.568789
+   1.c7f2018 |  -.3252916   .0018529  -175.55   0.000    -.3289233   -.3216598
+   1.c7f2019 |  -.3208803   .0009348  -343.28   0.000    -.3227124   -.3190482
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+(results model2 are active now)
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =    22
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c8f2013 1.c8f2014 1.c8f2015 1.c8f2016 1.c8f2017 1.c8f2018 1.c8f2019
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+   1.c8f2013 |  -.1979893   .0800869    -2.47   0.013    -.3549567    -.041022
+   1.c8f2014 |  -.1775571   .1077436    -1.65   0.099    -.3887306    .0336165
+   1.c8f2015 |   .2759005   .2196494     1.26   0.209    -.1546045    .7064055
+   1.c8f2016 |  -.8812476   .0121481   -72.54   0.000    -.9050573   -.8574378
+   1.c8f2017 |  -.8681558   .0088031   -98.62   0.000    -.8854095   -.8509021
+   1.c8f2018 |   .2075577   .2482257     0.84   0.403    -.2789558    .6940712
+   1.c8f2019 |  -.8335208   .0041455  -201.07   0.000    -.8416458   -.8253958
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+(results model2 are active now)
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =    22
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c9f2014 1.c9f2015 1.c9f2016 1.c9f2017 1.c9f2018 1.c9f2019
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+   1.c9f2014 |    4.31101   1.101988     3.91   0.000     2.151153    6.470868
+   1.c9f2015 |   3.131639   .9226346     3.39   0.001     1.323309     4.93997
+   1.c9f2016 |   .0095616   .2959987     0.03   0.974    -.5705852    .5897083
+   1.c9f2017 |   2.934512   .7761983     3.78   0.000     1.413192    4.455833
+   1.c9f2018 |   .6706323   .4670861     1.44   0.151    -.2448397    1.586104
+   1.c9f2019 |   3.193298   1.268806     2.52   0.012     .7064837    5.680112
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+(results model2 are active now)
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =    88
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c10f2015 1.c10f2016 1.c10f2017 1.c10f2018 1.c10f2019
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+  1.c10f2015 |  -1.703199   1.254846    -1.36   0.175    -4.162652    .7562531
+  1.c10f2016 |  -1.969704   1.670357    -1.18   0.238    -5.243544    1.304136
+  1.c10f2017 |  -1.839067   1.663987    -1.11   0.269    -5.100423    1.422288
+  1.c10f2018 |  -1.025911   1.679616    -0.61   0.541    -4.317899    2.266077
+  1.c10f2019 |  -2.861232   2.570279    -1.11   0.266    -7.898886    2.176422
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+(results model2 are active now)
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =    66
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c11f2016 1.c11f2017 1.c11f2018 1.c11f2019
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+  1.c11f2016 |   .2672592   .2902695     0.92   0.357    -.3016586    .8361771
+  1.c11f2017 |   .1398881    .409337     0.34   0.733    -.6623978    .9421739
+  1.c11f2018 |   2.345115    2.62838     0.89   0.372    -2.806414    7.496645
+  1.c11f2019 |  -.0434664   .8031577    -0.05   0.957    -1.617627    1.530694
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+(results model2 are active now)
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =    44
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c12f2018 1.c12f2019
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+  1.c12f2018 |   1.216701   .5458812     2.23   0.026     .1467935    2.286608
+  1.c12f2019 |  -1.417961   .7427382    -1.91   0.056    -2.873701    .0377788
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+(results model2 are active now)
+
+Average marginal effects                               Number of obs   = 1,122
+                                                       Subpop. no. obs =    22
+
+Expression: Predicted number of events, predict()
+dy/dx wrt:  1.c13f2019
+
+                                (Std. err. adjusted for 51 clusters in stfips)
+------------------------------------------------------------------------------
+             |            Unconditional
+             |      dy/dx   std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+  1.c13f2019 |  -3.404736   .0099045  -343.76   0.000    -3.424149   -3.385324
+------------------------------------------------------------------------------
+Note: dy/dx for factor levels is the discrete change from the base level.
+
+. 
+. /* CS similar too */
+. gen first_treat = FPA_FULL_YEAR
+(462 missing values generated)
+
+. replace first_treat = 0 if first_treat == .
+(462 real changes made)
+
+. csdid malp_np , ivar(stfips) time(year) gvar(first_treat)
+Units always treated found. These will be excluded
+..................................................
+..................................................
+..................................................
+..................................................
+..................................................
+.......................
+Difference-in-difference with Multiple Time Periods
+
+                                                           Number of obs = 924
+Outcome model  : weighted least squares
+Treatment model: inverse probability tilting
+------------------------------------------------------------------------------
+             | Coefficient  Std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+g2000        |
+ t_1998_1999 |  -1.333333   .3520805    -3.79   0.000    -2.023398   -.6432682
+ t_1999_2000 |   3.047619   .4011106     7.60   0.000     2.261457    3.833781
+ t_1999_2001 |   1.857143   .3452674     5.38   0.000     1.180431    2.533855
+ t_1999_2002 |   -.952381   .4924656    -1.93   0.053    -1.917596     .012834
+ t_1999_2003 |   3.047619   .4688781     6.50   0.000     2.128635    3.966603
+ t_1999_2004 |   6.857143   .5185262    13.22   0.000      5.84085    7.873436
+ t_1999_2005 |  -2.047619   .6078705    -3.37   0.001    -3.239023   -.8562148
+ t_1999_2006 |   .0952381   .4359407     0.22   0.827    -.7591899    .9496661
+ t_1999_2007 |         -1   .7678341    -1.30   0.193    -2.504927    .5049271
+ t_1999_2008 |   3.285714   .5991031     5.48   0.000     2.111494    4.459935
+ t_1999_2009 |    3.47619   .6920968     5.02   0.000     2.119706    4.832675
+ t_1999_2010 |   1.142857   .7293202     1.57   0.117    -.2865842    2.572299
+ t_1999_2011 |  -.9047619   .5867191    -1.54   0.123     -2.05471    .2451864
+ t_1999_2012 |   2.333333   .7863153     2.97   0.003     .7921837    3.874483
+ t_1999_2013 |  -.2380952   .8829572    -0.27   0.787     -1.96866    1.492469
+ t_1999_2014 |   1.904762   .8906284     2.14   0.032     .1591624    3.650361
+ t_1999_2015 |    .952381    .717378     1.33   0.184    -.4536542    2.358416
+ t_1999_2016 |   4.571429   .8290952     5.51   0.000     2.946432    6.196425
+ t_1999_2017 |   8.142857   .8337705     9.77   0.000     6.508697    9.777017
+ t_1999_2018 |  -1.380952   .4688781    -2.95   0.003    -2.299937   -.4619682
+ t_1999_2019 |   2.095238   .3360755     6.23   0.000     1.436542    2.753934
+-------------+----------------------------------------------------------------
+g2005        |
+ t_1998_1999 |  -.3333333   .3520805    -0.95   0.344    -1.023398    .3567318
+ t_1999_2000 |   -.952381   .4011106    -2.37   0.018    -1.738543   -.1662185
+ t_2000_2001 |   .8095238   .5619009     1.44   0.150    -.2917818    1.910829
+ t_2001_2002 |  -.8095238    .434452    -1.86   0.062    -1.661034    .0419864
+ t_2002_2003 |  -6.94e-17   .4994328    -0.00   1.000    -.9788703    .9788703
+ t_2003_2004 |   .8095238   .5856138     1.38   0.167    -.3382582    1.957306
+ t_2004_2005 |   .0952381   .6057351     0.16   0.875    -1.091981    1.282457
+ t_2004_2006 |  -1.761905   .4898274    -3.60   0.000    -2.721949   -.8018607
+ t_2004_2007 |  -.8571429   .5482841    -1.56   0.118     -1.93176    .2174743
+ t_2004_2008 |  -2.571429    .717679    -3.58   0.000    -3.978054   -1.164804
+ t_2004_2009 |  -2.380952     .68504    -3.48   0.001    -3.723606   -1.038299
+ t_2004_2010 |  -2.714286    .713151    -3.81   0.000    -4.112036   -1.316535
+ t_2004_2011 |  -3.761905   .5212264    -7.22   0.000     -4.78349    -2.74032
+ t_2004_2012 |   -2.52381   .8209807    -3.07   0.002    -4.132902   -.9147169
+ t_2004_2013 |  -4.095238   .8106568    -5.05   0.000    -5.684096    -2.50638
+ t_2004_2014 |  -2.952381   .9245363    -3.19   0.001    -4.764439   -1.140323
+ t_2004_2015 |  -.9047619   .7343369    -1.23   0.218    -2.344036    .5345119
+ t_2004_2016 |  -3.285714   .9550982    -3.44   0.001    -5.157672   -1.413756
+ t_2004_2017 |   1.285714   .9550982     1.35   0.178    -.5862437    3.157672
+ t_2004_2018 |  -.2380952   .7123936    -0.33   0.738    -1.634361     1.15817
+ t_2004_2019 |   .2380952   .5298558     0.45   0.653    -.8004031    1.276594
+-------------+----------------------------------------------------------------
+g2006        |
+ t_1998_1999 |  -.3333333   .3520805    -0.95   0.344    -1.023398    .3567318
+ t_1999_2000 |   1.047619   .4011106     2.61   0.009     .2614566    1.833781
+ t_2000_2001 |  -.1904762   .5619009    -0.34   0.735    -1.291782    .9108294
+ t_2001_2002 |  -2.809524    .434452    -6.47   0.000    -3.661034   -1.958014
+ t_2002_2003 |          4   .4994328     8.01   0.000      3.02113     4.97887
+ t_2003_2004 |  -2.190476   .5856138    -3.74   0.000    -3.338258   -1.042694
+ t_2004_2005 |   17.09524   .6057351    28.22   0.000     15.90802    18.28246
+ t_2005_2006 |  -19.85714   .5141345   -38.62   0.000    -20.86483   -18.84946
+ t_2005_2007 |  -19.95238   .8288346   -24.07   0.000    -21.57687   -18.32789
+ t_2005_2008 |  -19.66667   .7805264   -25.20   0.000    -21.19647   -18.13686
+ t_2005_2009 |  -15.47619   .8481514   -18.25   0.000    -17.13854   -13.81384
+ t_2005_2010 |  -20.80952   .5778176   -36.01   0.000    -21.94203   -19.67702
+ t_2005_2011 |  -20.85714   .6810879   -30.62   0.000    -22.19205   -19.52224
+ t_2005_2012 |  -20.61905   .6580263   -31.33   0.000    -21.90876   -19.32934
+ t_2005_2013 |  -19.19048   .8924451   -21.50   0.000    -20.93964   -17.44132
+ t_2005_2014 |  -13.04762    .837002   -15.59   0.000    -14.68811   -11.40713
+ t_2005_2015 |        -20   .6135285   -32.60   0.000    -21.20249   -18.79751
+ t_2005_2016 |  -17.38095   .8233447   -21.11   0.000    -18.99468   -15.76723
+ t_2005_2017 |  -17.80952   1.044626   -17.05   0.000    -19.85695    -15.7621
+ t_2005_2018 |  -18.33333   .7105724   -25.80   0.000    -19.72603   -16.94064
+ t_2005_2019 |  -17.85714   .7447038   -23.98   0.000    -19.31674   -16.39755
+-------------+----------------------------------------------------------------
+g2010        |
+ t_1998_1999 |  -.3333333   .3520805    -0.95   0.344    -1.023398    .3567318
+ t_1999_2000 |   -.952381   .4011106    -2.37   0.018    -1.738543   -.1662185
+ t_2000_2001 |   .8095238   .5619009     1.44   0.150    -.2917818    1.910829
+ t_2001_2002 |  -1.809524    .434452    -4.17   0.000    -2.661034   -.9580136
+ t_2002_2003 |   2.64e-17   .4994328     0.00   1.000    -.9788703    .9788703
+ t_2003_2004 |   1.809524   .5856138     3.09   0.002     .6617418    2.957306
+ t_2004_2005 |  -1.904762   .6057351    -3.14   0.002    -3.091981   -.7175429
+ t_2005_2006 |   .1428571   .5141345     0.28   0.781     -.864828    1.150542
+ t_2006_2007 |  -1.095238   .7312424    -1.50   0.134    -2.528447    .3379707
+ t_2007_2008 |   .2857143   .7350717     0.39   0.698       -1.155    1.726428
+ t_2008_2009 |   .1904762   .7050805     0.27   0.787    -1.191456    1.572409
+ t_2009_2010 |  -.3333333   .7891938    -0.42   0.673    -1.880125    1.213458
+ t_2009_2011 |  -.3809524    .633445    -0.60   0.548    -1.622482     .860577
+ t_2009_2012 |  -1.142857   .7104204    -1.61   0.108    -2.535256    .2495412
+ t_2009_2013 |   .2857143   .6140563     0.47   0.642    -.9178139    1.489242
+ t_2009_2014 |  -1.571429   .8665396    -1.81   0.070    -3.269815    .1269578
+ t_2009_2015 |   -1.52381   .6121189    -2.49   0.013    -2.723541   -.3240785
+ t_2009_2016 |   .0952381   .7821847     0.12   0.903    -1.437816    1.628292
+ t_2009_2017 |   .6666667   .6035922     1.10   0.269    -.5163522    1.849686
+ t_2009_2018 |   1.142857    .629169     1.82   0.069    -.0902914    2.376006
+ t_2009_2019 |   2.619048   .6405645     4.09   0.000     1.363564    3.874531
+-------------+----------------------------------------------------------------
+g2011        |
+ t_1998_1999 |  -1.333333   .5883731    -2.27   0.023    -2.486523   -.1801432
+ t_1999_2000 |   -.952381   .4011106    -2.37   0.018    -1.738543   -.1662185
+ t_2000_2001 |   .1428571   .9133735     0.16   0.876    -1.647322    1.933036
+ t_2001_2002 |   .1904762   .9248866     0.21   0.837    -1.622268    2.003221
+ t_2002_2003 |   .6666667   .5687769     1.17   0.241    -.4481156    1.781449
+ t_2003_2004 |  -1.857143   1.323008    -1.40   0.160    -4.450191    .7359057
+ t_2004_2005 |   .0952381   .7675528     0.12   0.901    -1.409138    1.599614
+ t_2005_2006 |   .8095238   1.107834     0.73   0.465    -1.361792     2.98084
+ t_2006_2007 |  -1.761905   .7802497    -2.26   0.024    -3.291166   -.2326435
+ t_2007_2008 |   1.952381   1.930159     1.01   0.312    -1.830662    5.735424
+ t_2008_2009 |  -.4761905   1.208347    -0.39   0.694    -2.844506    1.892125
+ t_2009_2010 |  -2.333333   .9192655    -2.54   0.011    -4.135061    -.531606
+ t_2010_2011 |   1.285714   .7731595     1.66   0.096    -.2296505    2.801079
+ t_2010_2012 |   1.857143   1.889165     0.98   0.326    -1.845553    5.559839
+ t_2010_2013 |   .2857143   .9204394     0.31   0.756    -1.518314    2.089742
+ t_2010_2014 |   1.095238   .8965494     1.22   0.222    -.6619665    2.852443
+ t_2010_2015 |    2.47619   2.264737     1.09   0.274    -1.962613    6.914994
+ t_2010_2016 |   2.428571   2.602608     0.93   0.351    -2.672446    7.529589
+ t_2010_2017 |   1.666667    1.33899     1.24   0.213     -.957706    4.291039
+ t_2010_2018 |   2.809524   .7909705     3.55   0.000      1.25925    4.359798
+ t_2010_2019 |   3.285714   .9824065     3.34   0.001     1.360233    5.211196
+-------------+----------------------------------------------------------------
+g2012        |
+ t_1998_1999 |  -.3333333   .3520805    -0.95   0.344    -1.023398    .3567318
+ t_1999_2000 |   -.952381   .4011106    -2.37   0.018    -1.738543   -.1662185
+ t_2000_2001 |   .8095238   .5619009     1.44   0.150    -.2917818    1.910829
+ t_2001_2002 |  -1.809524    .434452    -4.17   0.000    -2.661034   -.9580136
+ t_2002_2003 |  -6.94e-17   .4994328    -0.00   1.000    -.9788703    .9788703
+ t_2003_2004 |   .8095238   .5856138     1.38   0.167    -.3382582    1.957306
+ t_2004_2005 |   .0952381   .6057351     0.16   0.875    -1.091981    1.282457
+ t_2005_2006 |  -.8571429   .5141345    -1.67   0.095    -1.864828    .1505423
+ t_2006_2007 |  -.0952381   .7312424    -0.13   0.896    -1.528447    1.337971
+ t_2007_2008 |  -.7142857   .7350717    -0.97   0.331       -2.155    .7264284
+ t_2008_2009 |   .1904762   .7050805     0.27   0.787    -1.191456    1.572409
+ t_2009_2010 |  -.3333333   .7891938    -0.42   0.673    -1.880125    1.213458
+ t_2010_2011 |  -1.047619   .5490713    -1.91   0.056    -2.123779     .028541
+ t_2011_2012 |   .2380952   .8106568     0.29   0.769    -1.350763    1.826953
+ t_2011_2013 |  -.3333333   .7658627    -0.44   0.663    -1.834397     1.16773
+ t_2011_2014 |  -.1904762   .7426711    -0.26   0.798    -1.646085    1.265132
+ t_2011_2015 |  -.1428571   .7007793    -0.20   0.838    -1.516359    1.230645
+ t_2011_2016 |    1.47619   .9322128     1.58   0.113     -.350913    3.303294
+ t_2011_2017 |   2.047619   .8094571     2.53   0.011     .4611123    3.634126
+ t_2011_2018 |    2.52381   .6121189     4.12   0.000     1.324079    3.723541
+ t_2011_2019 |          4   .5947617     6.73   0.000     2.834288    5.165712
+-------------+----------------------------------------------------------------
+g2013        |
+ t_1998_1999 |  -1.333333   .3520805    -3.79   0.000    -2.023398   -.6432682
+ t_1999_2000 |   -.952381   .4011106    -2.37   0.018    -1.738543   -.1662185
+ t_2000_2001 |  -.1904762   .5619009    -0.34   0.735    -1.291782    .9108294
+ t_2001_2002 |  -.8095238    .434452    -1.86   0.062    -1.661034    .0419864
+ t_2002_2003 |          2   .4994328     4.00   0.000      1.02113     2.97887
+ t_2003_2004 |   .8095238   .5856138     1.38   0.167    -.3382582    1.957306
+ t_2004_2005 |  -1.904762   .6057351    -3.14   0.002    -3.091981   -.7175429
+ t_2005_2006 |   .1428571   .5141345     0.28   0.781     -.864828    1.150542
+ t_2006_2007 |  -1.095238   .7312424    -1.50   0.134    -2.528447    .3379707
+ t_2007_2008 |   .2857143   .7350717     0.39   0.698       -1.155    1.726428
+ t_2008_2009 |   .1904762   .7050805     0.27   0.787    -1.191456    1.572409
+ t_2009_2010 |  -.3333333   .7891938    -0.42   0.673    -1.880125    1.213458
+ t_2010_2011 |  -1.047619   .5490713    -1.91   0.056    -2.123779     .028541
+ t_2011_2012 |  -.7619048   .8106568    -0.94   0.347    -2.350763    .8269534
+ t_2012_2013 |   .4285714   .6301979     0.68   0.496    -.8065937    1.663737
+ t_2012_2014 |   .5714286    .946581     0.60   0.546    -1.283836    2.426693
+ t_2012_2015 |   1.619048   .3656212     4.43   0.000     .9024432    2.335652
+ t_2012_2016 |  -.7619048   .4944351    -1.54   0.123     -1.73098    .2071702
+ t_2012_2017 |   .8095238   .7457181     1.09   0.278    -.6520568    2.271104
+ t_2012_2018 |   3.285714   .7473092     4.40   0.000     1.821015    4.750413
+ t_2012_2019 |   3.761905   .8354524     4.50   0.000     2.124448    5.399361
+-------------+----------------------------------------------------------------
+g2014        |
+ t_1998_1999 |  -1.333333   .3520805    -3.79   0.000    -2.023398   -.6432682
+ t_1999_2000 |    .047619   .4011106     0.12   0.905    -.7385434    .8337815
+ t_2000_2001 |  -1.190476   .5619009    -2.12   0.034    -2.291782   -.0891706
+ t_2001_2002 |   1.190476    .434452     2.74   0.006      .338966    2.041986
+ t_2002_2003 |         -1   .4994328    -2.00   0.045     -1.97887   -.0211297
+ t_2003_2004 |   .8095238   .5856138     1.38   0.167    -.3382582    1.957306
+ t_2004_2005 |  -.9047619   .6057351    -1.49   0.135    -2.091981    .2824571
+ t_2005_2006 |  -.8571429   .5141345    -1.67   0.095    -1.864828    .1505423
+ t_2006_2007 |  -.0952381   .7312424    -0.13   0.896    -1.528447    1.337971
+ t_2007_2008 |   .2857143   .7350717     0.39   0.698       -1.155    1.726428
+ t_2008_2009 |   .1904762   .7050805     0.27   0.787    -1.191456    1.572409
+ t_2009_2010 |  -2.333333   .7891938    -2.96   0.003    -3.880125   -.7865418
+ t_2010_2011 |   1.952381   .5490713     3.56   0.000     .8762209    3.028541
+ t_2011_2012 |  -.7619048   .8106568    -0.94   0.347    -2.350763    .8269534
+ t_2012_2013 |  -1.571429   .6301979    -2.49   0.013    -2.806594   -.3362635
+ t_2013_2014 |   4.142857   .8966699     4.62   0.000     2.385417    5.900298
+ t_2013_2015 |   4.190476   .5199819     8.06   0.000      3.17133    5.209622
+ t_2013_2016 |   .8095238   .8744783     0.93   0.355    -.9044221     2.52347
+ t_2013_2017 |   4.380952   .6440947     6.80   0.000      3.11855    5.643355
+ t_2013_2018 |   3.857143   .7976317     4.84   0.000     2.293813    5.420472
+ t_2013_2019 |   5.333333    .860663     6.20   0.000     3.646465    7.020202
+-------------+----------------------------------------------------------------
+g2015        |
+ t_1998_1999 |  -1.083333   .8190456    -1.32   0.186    -2.688633    .5219665
+ t_1999_2000 |  -1.452381   .4726413    -3.07   0.002    -2.378741   -.5260211
+ t_2000_2001 |   2.809524   2.107305     1.33   0.182    -1.320717    6.939765
+ t_2001_2002 |  -.0595238    .857685    -0.07   0.945    -1.740555    1.621508
+ t_2002_2003 |       1.25   1.473536     0.85   0.396    -1.638077    4.138077
+ t_2003_2004 |  -.6904762    1.97622    -0.35   0.727    -4.563795    3.182843
+ t_2004_2005 |  -1.404762   .6552977    -2.14   0.032    -2.689122   -.1204021
+ t_2005_2006 |  -1.357143   1.151883    -1.18   0.239    -3.614792    .9005062
+ t_2006_2007 |  -.0952381   .8858417    -0.11   0.914    -1.831456     1.64098
+ t_2007_2008 |  -.4642857   .8439226    -0.55   0.582    -2.118344    1.189772
+ t_2008_2009 |   .9404762   .7375727     1.28   0.202    -.5051398    2.386092
+ t_2009_2010 |  -.8333333    .967123    -0.86   0.389     -2.72886    1.062193
+ t_2010_2011 |   1.952381   1.084656     1.80   0.072    -.1735064    4.078268
+ t_2011_2012 |   .2380952   1.237806     0.19   0.847    -2.187961    2.664151
+ t_2012_2013 |  -.8214286   1.394283    -0.59   0.556    -3.554173    1.911315
+ t_2013_2014 |  -.8571429   1.026653    -0.83   0.404    -2.869346     1.15506
+ t_2014_2015 |    .297619   .8634021     0.34   0.730    -1.394618    1.989856
+ t_2014_2016 |  -2.083333   2.334166    -0.89   0.372    -6.658214    2.491548
+ t_2014_2017 |  -1.511905   2.880404    -0.52   0.600    -7.157393    4.133583
+ t_2014_2018 |   .7142857   3.046842     0.23   0.815    -5.257414    6.685986
+ t_2014_2019 |  -.0595238   3.831643    -0.02   0.988    -7.569405    7.450358
+-------------+----------------------------------------------------------------
+g2016        |
+ t_1998_1999 |  -.6666667    .445011    -1.50   0.134    -1.538872    .2055388
+ t_1999_2000 |   -.952381   .4011106    -2.37   0.018    -1.738543   -.1662185
+ t_2000_2001 |   .4761905    .624345     0.76   0.446    -.7475033    1.699884
+ t_2001_2002 |  -1.142857   .5126623    -2.23   0.026    -2.147657   -.1380576
+ t_2002_2003 |   4.58e-17   .6867717     0.00   1.000    -1.346048    1.346048
+ t_2003_2004 |   .4761905    .645769     0.74   0.461    -.7894935    1.741874
+ t_2004_2005 |  -.2380952   .8143779    -0.29   0.770    -1.834247    1.358056
+ t_2005_2006 |  -.1904762   .8847897    -0.22   0.830    -1.924632     1.54368
+ t_2006_2007 |   .2380952   .9115985     0.26   0.794    -1.548605    2.024795
+ t_2007_2008 |  -.3809524    .914673    -0.42   0.677    -2.173679    1.411774
+ t_2008_2009 |    1.52381   .7557861     2.02   0.044      .042496    3.005123
+ t_2009_2010 |  -2.666667    .834806    -3.19   0.001    -4.302856   -1.030477
+ t_2010_2011 |  -.7142857   .6128241    -1.17   0.244    -1.915399    .4868275
+ t_2011_2012 |   1.238095   .9377562     1.32   0.187    -.5998731    3.076064
+ t_2012_2013 |  -.2380952   .8327338    -0.29   0.775    -1.870224    1.394033
+ t_2013_2014 |   .1428571   1.212717     0.12   0.906    -2.234025     2.51974
+ t_2014_2015 |  -1.619048    .932676    -1.74   0.083    -3.447059    .2089637
+ t_2015_2016 |   1.285714   .8019521     1.60   0.109    -.2860829    2.857511
+ t_2015_2017 |    2.52381   .9664494     2.61   0.009     .6296035    4.418016
+ t_2015_2018 |          3   .6689304     4.48   0.000     1.688921    4.311079
+ t_2015_2019 |    4.47619   .8070524     5.55   0.000     2.894397    6.057984
+-------------+----------------------------------------------------------------
+g2018        |
+ t_1998_1999 |  -.8333333   1.117569    -0.75   0.456    -3.023729    1.357062
+ t_1999_2000 |    .047619   1.469997     0.03   0.974    -2.833521    2.928759
+ t_2000_2001 |  -.1904762   .9031792    -0.21   0.833    -1.960675    1.579722
+ t_2001_2002 |  -1.309524   .5601326    -2.34   0.019    -2.407364   -.2116841
+ t_2002_2003 |   3.23e-18   .4994328     0.00   1.000    -.9788703    .9788703
+ t_2003_2004 |   .3095238    .684064     0.45   0.651    -1.031217    1.650265
+ t_2004_2005 |   .5952381   .7013665     0.85   0.396    -.7794151    1.969891
+ t_2005_2006 |   1.142857   .8742621     1.31   0.191    -.5706652    2.856379
+ t_2006_2007 |  -3.595238   1.288299    -2.79   0.005    -6.120259   -1.070218
+ t_2007_2008 |   1.285714   1.019966     1.26   0.207    -.7133821    3.284811
+ t_2008_2009 |  -.8095238   1.580234    -0.51   0.608    -3.906725    2.287677
+ t_2009_2010 |  -.3333333   1.619514    -0.21   0.837    -3.507523    2.840857
+ t_2010_2011 |  -1.547619   1.194353    -1.30   0.195    -3.888508      .79327
+ t_2011_2012 |   2.738095   1.944779     1.41   0.159    -1.073601    6.549792
+ t_2012_2013 |  -2.071429   1.233754    -1.68   0.093    -4.489542    .3466852
+ t_2013_2014 |   2.142857    1.67452     1.28   0.201    -1.139142    5.424856
+ t_2014_2015 |   1.047619    .757356     1.38   0.167    -.4367715     2.53201
+ t_2015_2016 |  -3.880952   1.863285    -2.08   0.037    -7.532924    -.228981
+ t_2016_2017 |   2.071429   .9431311     2.20   0.028     .2229256    3.919932
+ t_2017_2018 |    2.97619   .7742498     3.84   0.000     1.458689    4.493692
+ t_2017_2019 |   1.952381   1.091559     1.79   0.074    -.1870362    4.091798
+-------------+----------------------------------------------------------------
+g2019        |
+ t_1998_1999 |  -2.333333   .3520805    -6.63   0.000    -3.023398   -1.643268
+ t_1999_2000 |   1.047619   .4011106     2.61   0.009     .2614566    1.833781
+ t_2000_2001 |  -1.190476   .5619009    -2.12   0.034    -2.291782   -.0891706
+ t_2001_2002 |  -.8095238    .434452    -1.86   0.062    -1.661034    .0419864
+ t_2002_2003 |   2.64e-17   .4994328     0.00   1.000    -.9788703    .9788703
+ t_2003_2004 |   2.809524   .5856138     4.80   0.000     1.661742    3.957306
+ t_2004_2005 |  -.9047619   .6057351    -1.49   0.135    -2.091981    .2824571
+ t_2005_2006 |   .1428571   .5141345     0.28   0.781     -.864828    1.150542
+ t_2006_2007 |  -4.095238   .7312424    -5.60   0.000    -5.528447   -2.662029
+ t_2007_2008 |   5.285714   .7350717     7.19   0.000        3.845    6.726428
+ t_2008_2009 |   .1904762   .7050805     0.27   0.787    -1.191456    1.572409
+ t_2009_2010 |   1.666667   .7891938     2.11   0.035     .1198752    3.213458
+ t_2010_2011 |  -6.047619   .5490713   -11.01   0.000    -7.123779   -4.971459
+ t_2011_2012 |   1.238095   .8106568     1.53   0.127    -.3507629    2.826953
+ t_2012_2013 |   2.428571   .6301979     3.85   0.000     1.193406    3.663737
+ t_2013_2014 |   2.142857   .8966699     2.39   0.017     .3854165    3.900298
+ t_2014_2015 |   4.047619    .757356     5.34   0.000     2.563228     5.53201
+ t_2015_2016 |  -6.380952   .5889234   -10.83   0.000    -7.535221   -5.226684
+ t_2016_2017 |  -3.428571   .8743548    -3.92   0.000    -5.142275   -1.714868
+ t_2017_2018 |    2.47619   .6888126     3.59   0.000     1.126143    3.826238
+ t_2018_2019 |  -.5238095   .4598089    -1.14   0.255    -1.425018    .3773994
+-------------+----------------------------------------------------------------
+g2021        |
+ t_1998_1999 |   5.666667   .3520805    16.09   0.000     4.976602    6.356732
+ t_1999_2000 |  -7.952381   .4011106   -19.83   0.000    -8.738543   -7.166219
+ t_2000_2001 |   12.80952   .5619009    22.80   0.000     11.70822    13.91083
+ t_2001_2002 |  -7.809524    .434452   -17.98   0.000    -8.661034   -6.958014
+ t_2002_2003 |          5   .4994328    10.01   0.000      4.02113     5.97887
+ t_2003_2004 |  -2.190476   .5856138    -3.74   0.000    -3.338258   -1.042694
+ t_2004_2005 |  -1.904762   .6057351    -3.14   0.002    -3.091981   -.7175429
+ t_2005_2006 |   .1428571   .5141345     0.28   0.781     -.864828    1.150542
+ t_2006_2007 |   2.904762   .7312424     3.97   0.000     1.471553    4.337971
+ t_2007_2008 |  -6.714286   .7350717    -9.13   0.000       -8.155   -5.273572
+ t_2008_2009 |   4.190476   .7050805     5.94   0.000     2.808544    5.572409
+ t_2009_2010 |  -11.33333   .7891938   -14.36   0.000    -12.88012   -9.786542
+ t_2010_2011 |   14.95238   .5490713    27.23   0.000     13.87622    16.02854
+ t_2011_2012 |  -5.761905   .8106568    -7.11   0.000    -7.350763   -4.173047
+ t_2012_2013 |   8.428571   .6301979    13.37   0.000     7.193406    9.663737
+ t_2013_2014 |   2.142857   .8966699     2.39   0.017     .3854165    3.900298
+ t_2014_2015 |   11.04762    .757356    14.59   0.000     9.563228    12.53201
+ t_2015_2016 |  -10.38095   .5889234   -17.63   0.000    -11.53522   -9.226684
+ t_2016_2017 |   3.571429   .8743548     4.08   0.000     1.857725    5.285132
+ t_2017_2018 |  -.5238095   .6888126    -0.76   0.447    -1.873857    .8262384
+ t_2018_2019 |  -16.52381   .4598089   -35.94   0.000    -17.42502    -15.6226
+------------------------------------------------------------------------------
+Control: Never Treated
+
+See Callaway and Sant'Anna (2021) for details
+
+. 
+.    
+. **# To do 
+. /*
+> 
+> Reproduce the Test for non-Parallel trends in linear model. It rejects with p < 0.05,
+> indicating a problem with the linear model:
+> 
+> Try Callaway and Sant'Anna (2020, Journal of Econometrics)
+> 
+> gen first_treat = FPA_FULL_YEAR
+> replace first_treat = 0 if first_treat == .
+> csdid malp_np `x' , ivar(stfips) time(year) gvar(first_treat)
+> Check why it is not working when adding controls!!!!!!
+> 
+> 
+> Construct a table for ATT, and present a tabe for ATE? (or any other way of grouping them)
+> 
+> Make the code pretty :)
+> */
+. 
+. 
+. log close
+      name:  <unnamed>
+       log:  /Users/nix/Documents/GitHub/RA_Fall22/Logs/Replication_1.log
+  log type:  text
+ closed on:  15 Sep 2022, 12:20:49
+------------------------------------------------------------------------------------------------------------------------------------

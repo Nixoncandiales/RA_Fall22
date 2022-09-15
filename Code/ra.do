@@ -183,12 +183,161 @@ csdid malp_np pctpoverty unemp rpcinc , ivar(stfips) time(year) gvar(first_treat
 
 
 
+**/////// TEST & DEBUG **/////
+
+numlist "1/14"
+local y1 = "`r(numlist)'"
+
+local n : word count `y1'
+levelsof FPA_FULL_YEAR, local(y2)
+
+
+set trace on
+ forvalues i = 1/`n' {
+      local a : word `i' of `y1'
+      local b : word `i' of `y2'
+	  forvalues j = `b'/2019{
+*		gen c`a'f`j' = c`a'*f`j'
+*		label variable c`a'f`j' "Cohort `a'"
+		di "The variable c`a'f`j' was generated"
+	  }
+   }
+set trace off
+cat says meow
+dog says woof
+cow says moo
+pig says oinkoink
+
+/////
+
+
+levelsof FPA_FULL_YEAR, local(cohorts)
+local k=1
+di "`prueba'"
+foreach y in `r(levels)' {
+	
+	forvalues i = `k'/14 {
+		forvalues j = `cohorts'/2019 {
+			di "c`i'f`j'"
+			local k = `k' + 1
+		}
+	}
+}
+//////
+	forvalues i = 1/14 {
+		forvalues j = `cohorts'/2019 {
+			di "c`i'f`j'"
+			local k = `k' + 1
+		}
+	}
+
+//////
+foreach x in newid2 {
+    replace switchers = 1 if doc[_n] != doc[_n+1]
+}
 
 
 
 
 
 
+
+
+
+
+*** Loop
+
+foreach z in `cohort' {
+
+	local x_dm_`z'
+	local y "x_dm_`z'"
+
+		foreach v in `x' {
+
+			sum `v' if `z'
+			gen `v'_dm_`z' = `v' - r(mean)
+			label variable `v'_dm_`z' "`v' demeaned at cohort `z'"
+			local `y' `x_dm_`z'' `v'_dm_`z'
+		}
+}
+
+*Loop
+forvalues i = 1/13 {
+	
+	foreach var in c`i'f*	{
+		 margins, dydx(1.`var') subpop(if c`i'== 1) noestimcheck vce(uncond)
+	}		
+}	
+
+
+
+
+* Goal To construct a table formatted like this. Note the estimates are wrong
+*Loop
+estimates restore model
+forvalues i = 1/13 {
+	
+	foreach var in c`i'f*	{
+
+		 margins, dydx(`var') subpop(if c`i'== 1) noestimcheck vce(uncond)
+	}		
+}	
+
+
+global x "pctpoverty unemp rpcinc"
+qui poisson malp_np i.c1f* i.c2f* i.c3f* i.c4f* i.c5f* i.c6f* i.c7f* i.c8f* i.c9f* i.c10f* i.c11f* i.c12f* i.c13f* f* ///
+				`i_year' c.`i_year'#c.`x' ///
+				`cohort' `x' c.c*#c.`x' , noomitted vce(cluster stfips)
+	/* To include if we have constant controls over time
+	i.c1f*#c.x_dm1 i.c2f*#c.x_dm3 i.c3f*#c.x_dm3 .... and so on for the demeaned variables
+	*/
+	
+	*Loop
+forvalues i = 1/13 {
+	
+	foreach var in c`i'f*	{
+		 margins, dydx(1.`var') subpop(if c`i'== 1) noestimcheck vce(uncond)
+	}		
+}	
+
+	set trace on
+forvalues i = 1/13 {
+	
+	foreach var in c`i'f*	{
+		
+		qui margins, dydx(1.`var') subpop(if c`i'== 1) noestimcheck vce(uncond) post
+		scalar tau44 = _b[1.`var']
+		di tau44
+		estimates restore beta
+	}		
+}	
+set trace off
+
+* Generate  the interactions
+numlist "1/14"
+local y1 = "`r(numlist)'"
+global y1 `y1'
+local n : word count `y1'
+levelsof FPA_FULL_YEAR
+global y2 `r(levels)'
+
+numlist "1/14"
+local y1 = "`r(numlist)'"
+
+local n : word count `y1'
+levelsof FPA_FULL_YEAR, local(y2)
+
+set trace on
+local n : word count $y1
+ forvalues i = 1/`n' {
+      local a : word `i' of $y1
+      local b : word `i' of $y2
+	  forvalues j = `b'/2019{
+	  	margins, dydx(1.c`a'f`j') subpop(if c`a'f`j'== 1) noestimcheck vce(uncond)
+		estimates restore beta
+	  }
+   }
+set trace off
 
 
 
