@@ -200,13 +200,18 @@ I am not linking the correct estimand. Thus, I can not construct the table yet. 
 
 **# Desired Output
 /* Goal 
-The Output goal of this do-file is Implementing Two-Way Fixed Effects,							
+The goal of this do-file is Implementing Two-Way Fixed Effects,							
 	the Two-Way Mundlak Regression, 							
 	and Difference-in-Differences Estimators proposed by Wooldrige (2021)
 
-	That is Estimate the ATT por cohort and post-treatment and present the results in a table. 
-	ALso, include code to do a linear combinates of the ATT to get a unique effect (ATE? not sure)
+	That is estimate the ATT per cohort and present the results in a table. 
+	Also, include code to do a linear combination of ATT to get a unique effect (such an ATE)
 */
+
+*** An example of the disired outcome is this 
+*** Note I am restricting subpop(if c`i'== 1) intentioally
+*** Just to get a sense of how the table should look like. 
+*** The ATT estimated are not correct. Toy example. 
 estimates restore model2
 forvalues i = 1/13 {
 	
@@ -216,7 +221,10 @@ forvalues i = 1/13 {
 	}		
 }		
 
-/* CS similar too */
+/* Callaway and Sant'Anna (2020, Journal of Econometrics) */
+*** Note I am not including covariates intentioally
+*** Just to get a sense of how the table should look like. 
+*** The disire outcome should append the previous tables as
 gen first_treat = FPA_FULL_YEAR
 replace first_treat = 0 if first_treat == .
 csdid malp_np , ivar(stfips) time(year) gvar(first_treat)

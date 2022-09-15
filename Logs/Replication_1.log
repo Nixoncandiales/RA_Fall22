@@ -2,7 +2,7 @@
       name:  <unnamed>
        log:  /Users/nix/Documents/GitHub/RA_Fall22/Logs/Replication_1.log
   log type:  text
- opened on:  15 Sep 2022, 12:17:38
+ opened on:  15 Sep 2022, 12:36:09
 
 . 
 . /****** Loading the data ************/
@@ -2523,13 +2523,18 @@ Estimating... tau13_2019= -16.296732
 . 
 . **# Desired Output
 . /* Goal 
-> The Output goal of this do-file is Implementing Two-Way Fixed Effects,                                                  
+> The goal of this do-file is Implementing Two-Way Fixed Effects,                                                 
 >         the Two-Way Mundlak Regression,                                                         
 >         and Difference-in-Differences Estimators proposed by Wooldrige (2021)
 > 
->         That is Estimate the ATT por cohort and post-treatment and present the results in a table. 
->         ALso, include code to do a linear combinates of the ATT to get a unique effect (ATE? not sure)
+>         That is estimate the ATT per cohort and present the results in a table. 
+>         Also, include code to do a linear combination of ATT to get a unique effect (such an ATE)
 > */
+. 
+. *** An example of the disired outcome is this 
+. *** Note I am restricting subpop(if c`i'== 1) intentioally
+. *** Just to get a sense of how the table should look like. 
+. *** The ATT estimated are not correct. Toy example. 
 . estimates restore model2
 (results model2 are active now)
 
@@ -2864,7 +2869,10 @@ dy/dx wrt:  1.c13f2019
 Note: dy/dx for factor levels is the discrete change from the base level.
 
 . 
-. /* CS similar too */
+. /* Callaway and Sant'Anna (2020, Journal of Econometrics) */
+. *** Note I am not including covariates intentioally
+. *** Just to get a sense of how the table should look like. 
+. *** The disire outcome should append the previous tables as
 . gen first_treat = FPA_FULL_YEAR
 (462 missing values generated)
 
@@ -3216,5 +3224,5 @@ See Callaway and Sant'Anna (2021) for details
       name:  <unnamed>
        log:  /Users/nix/Documents/GitHub/RA_Fall22/Logs/Replication_1.log
   log type:  text
- closed on:  15 Sep 2022, 12:20:49
+ closed on:  15 Sep 2022, 12:39:05
 ------------------------------------------------------------------------------------------------------------------------------------
