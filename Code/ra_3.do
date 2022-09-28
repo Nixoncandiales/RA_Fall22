@@ -11,7 +11,7 @@
 *	Prepared to: Sara Markowitz									*
 *	smarko2@emory.edu											*
 *	Emory University											*
-*	02/27/2020													*
+*	09/28/2020													*
 *****************************************************************
 
 ** Initial Setup 
@@ -71,14 +71,13 @@ poisson  `dvar' fpa $atorts $control i.stfips i.year if Astclass<3, exp(pop) clu
 }
 
 
-
-jwdid malp_np if Mstclass<3, ivar(stfips) tvar(year) gvar(first_treat) method(poisson)
-estat group
-
+gen first_treat = FPA_FULL_YEAR
+replace first_treat = 0 if first_treat == .
 
 jwdid malp_phys  if Mstclass<3, ivar(stfips) tvar(year) gvar(first_treat) method(poisson)
 estat group
 
-gen first_treat = FPA_FULL_YEAR
-replace first_treat = 0 if first_treat == .
+jwdid malp_np if Mstclass<3, ivar(stfips) tvar(year) gvar(first_treat) method(poisson)
+estat group
+
 csdid malp_np , ivar(stfips) time(year) gvar(first_treat)
