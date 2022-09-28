@@ -166,7 +166,9 @@ levelsof FPA_FULL_YEAR, local(y2)
 	  }
    }
 
-* Estimate the model
+*--------------------------------------------------------------------------------------------
+*------------------------- Estimate the model DEP VAR: mlp_np *------------------------------
+*--------------------------------------------------------------------------------------------
 qui poisson malp_np i.c1f* i.c2f* i.c3f* i.c4f* i.c5f* i.c6f* i.c7f* i.c8f* i.c9f* i.c10f* i.c11f* i.c12f* i.c13f* `i_year' ///
 					c.`i_year'#c.`x' `cohort' `x' c.c*#c.`x' , noomitted vce(cluster stfips)
 					/* To include if we have constant controls over time
@@ -176,26 +178,148 @@ estimates store model2 //store the estimates
 
 * Example How to get the ATT at cohort 13 at time 2019
 	estimates restore model2
-	margins, dydx(1.c13f2019) subpop(if c13f2019== 1) noestimcheck vce(uncond) post 
-	scalar tau13_2019 = _b[1.c13f2019]
-	di "tau13_2019 " tau13_2019
-	
-* Iterative approach to get the ATT over all cohorts and post-treatment period.
+	margins, dydx(1.c13f2019) subpop(if c13f2019== 1)  noestimcheck vce(uncond)	
+	margins, eydx(1.c13f2019) subpop(if c13f2019== 1)  noestimcheck vce(uncond)	
+*	scalar tau13_2019 = _b[1.c13f2019]
+*	di "tau13_2019 " tau13_2019
+
+/*	* Iterative approach to get the ATT over all cohorts and post-treatment period.
+*/
+
+/* Average Marginal Effect */
+numlist "1/14"
+local y1 = "`r(numlist)'"
+local n : word count `y1'
+levelsof FPA_FULL_YEAR, local(y2)
+postfile DyDx_mlp cohort time b se z pvalue ll ul using DyDx_mlp, replace 
  forvalues i = 1/`n' {
-      local a : word `i' of $y1
-      local b : word `i' of $y2
+      local a : word `i' of `y1'
+      local b : word `i' of `y2'
+	  di "Estimating Average Marginal Effects - Cohort `a'" _cont
 	  forvalues j = `b'/2019{
 	  	qui estimates restore model2
-		margins, dydx(1.c`a'f`j') subpop(if c`a'f`j'== 1) noestimcheck vce(uncond)
-		qui scalar tau`a'`j' = _b[1.c`a'f`j']
-		di "Estimating... tau`a'_`j'= " tau`a'`j'
+		qui margins, dydx(1.c`a'f`j') subpop(if c`a'f`j'== 1) noestimcheck vce(uncond)
+		local b = r(table)[1,2]
+		local se = r(table)[2,2]
+		local z = r(table)[3,2]
+		local pvalue = r(table)[4,2]
+		local ll = r(table)[5,2]
+		local ul = r(table)[6,2]
+		post DyDx_mlp (`a') (`j') (`b') (`se') (`z') (`pvalue') (`ll') (`ul')
+		di "." _cont
 	  }
+	  	noi di _dup(10) "." _cont
+		di "Done" _cont 	
+		noi di _dup(1) "!"
    }
-/*
-Currently I am not capturing the correct ATT. When retrievining it from the margins output
-I am not linking the correct estimand. Thus, I can not construct the table yet. Still need to work a bit on this
+postclose DyDx_mlp
+
+
+/* Semi Elasticity */
+numlist "1/14"
+local y1 = "`r(numlist)'"
+local n : word count `y1'
+levelsof FPA_FULL_YEAR, local(y2)
+postfile EyDx_mlp cohort time b se z pvalue ll ul using EyDx_mlp, replace 
+ forvalues i = 1/`n' {
+      local a : word `i' of `y1'
+      local b : word `i' of `y2'
+	  di "Estimating Predicted Number of Events - Cohort `a'" _cont
+	  forvalues j = `b'/2019{
+	  	qui estimates restore model2
+		qui margins, eydx(1.c`a'f`j') subpop(if c`a'f`j'== 1) noestimcheck vce(uncond)
+		local b = r(table)[1,2]
+		local se = r(table)[2,2]
+		local z = r(table)[3,2]
+		local pvalue = r(table)[4,2]
+		local ll = r(table)[5,2]
+		local ul = r(table)[6,2]
+		post EyDx_mlp (`a') (`j') (`b') (`se') (`z') (`pvalue') (`ll') (`ul')
+		di "." _cont
+	  }
+	  	noi di _dup(10) "." _cont
+		di "Done" _cont 	
+		noi di _dup(1) "!"
+   }
+postclose EyDx_mlp
+
+*--------------------------------------------------------------------------------------------
+*------------------------- Estimate the model DEP VAR: mlp_phy *------------------------------
+*--------------------------------------------------------------------------------------------
+qui poisson malp_phys i.c1f* i.c2f* i.c3f* i.c4f* i.c5f* i.c6f* i.c7f* i.c8f* i.c9f* i.c10f* i.c11f* i.c12f* i.c13f* `i_year' ///
+					c.`i_year'#c.`x' `cohort' `x' c.c*#c.`x' , noomitted vce(cluster stfips)
+					/* To include if we have constant controls over time
+					i.c1f*#c.x_dm1 i.c2f*#c.x_dm3 i.c3f*#c.x_dm3 .... and so on for the demeaned variables
+					*/
+estimates store model3 //store the estimates
+
+* Example How to get the ATT at cohort 13 at time 2019
+	estimates restore model3
+	margins, dydx(1.c13f2019) subpop(if c13f2019== 1)  noestimcheck vce(uncond)	
+	margins, eydx(1.c13f2019) subpop(if c13f2019== 1)  noestimcheck vce(uncond)	
+*	scalar tau13_2019 = _b[1.c13f2019]
+*	di "tau13_2019 " tau13_2019
+
+/*	* Iterative approach to get the ATT over all cohorts and post-treatment period.
 */
-   
+
+/* Average Marginal Effect */
+numlist "1/14"
+local y1 = "`r(numlist)'"
+local n : word count `y1'
+levelsof FPA_FULL_YEAR, local(y2)
+postfile DyDx_mlp_phys cohort time b se z pvalue ll ul using DyDx_mlp_phys, replace 
+ forvalues i = 1/`n' {
+      local a : word `i' of `y1'
+      local b : word `i' of `y2'
+	  di "Estimating Average Marginal Effects - Cohort `a'" _cont
+	  forvalues j = `b'/2019{
+	  	qui estimates restore model3
+		qui margins, dydx(1.c`a'f`j') subpop(if c`a'f`j'== 1) noestimcheck vce(uncond)
+		local b = r(table)[1,2]
+		local se = r(table)[2,2]
+		local z = r(table)[3,2]
+		local pvalue = r(table)[4,2]
+		local ll = r(table)[5,2]
+		local ul = r(table)[6,2]
+		post DyDx_mlp_phys (`a') (`j') (`b') (`se') (`z') (`pvalue') (`ll') (`ul')
+		di "." _cont
+	  }
+	  	noi di _dup(10) "." _cont
+		di "Done" _cont 	
+		noi di _dup(1) "!"
+   }
+postclose DyDx_mlp_phys
+
+
+/* Semi Elasticity */
+numlist "1/14"
+local y1 = "`r(numlist)'"
+local n : word count `y1'
+levelsof FPA_FULL_YEAR, local(y2)
+postfile EyDx_mlp_phys cohort time b se z pvalue ll ul using EyDx_mlp_phys, replace 
+ forvalues i = 1/`n' {
+      local a : word `i' of `y1'
+      local b : word `i' of `y2'
+	  di "Estimating Predicted Number of Events - Cohort `a'" _cont
+	  forvalues j = `b'/2019{
+	  	qui estimates restore model3
+		qui margins, eydx(1.c`a'f`j') subpop(if c`a'f`j'== 1) noestimcheck vce(uncond)
+		local b = r(table)[1,2]
+		local se = r(table)[2,2]
+		local z = r(table)[3,2]
+		local pvalue = r(table)[4,2]
+		local ll = r(table)[5,2]
+		local ul = r(table)[6,2]
+		post EyDx_mlp_phys (`a') (`j') (`b') (`se') (`z') (`pvalue') (`ll') (`ul')
+		di "." _cont
+	  }
+	  	noi di _dup(10) "." _cont
+		di "Done" _cont 	
+		noi di _dup(1) "!"
+   }
+postclose EyDx_mlp_phys
+
    
 
 **# Desired Output
@@ -249,5 +373,125 @@ Construct a table for ATT, and present a tabe for ATE? (or any other way of grou
 Make the code pretty :)
 */
 
+/// Pruebas
+
+* Example How to get the ATT at cohort 13 at time 2019
+	estimates restore model2
+	margins, dydx(1.c13f2019) subpop(if c13f2019== 1)  noestimcheck vce(uncond)
+	noi di _dup(80) "-"
+	local b = r(table)[1,2]
+	local se = r(table)[2,2]
+	local z = r(table)[3,2]
+	local pvalue = r(table)[4,2]
+	local ll = r(table)[5,2]
+	local ul = r(table)[6,2]
+	di `b' `se' `ze' `pvalue' `ll' `ul'
+	scalar tau13_2019 = _b[1.c13f2019]
+	di "tau13_2019 " tau13_2019
+
+
+local x pctpoverty unemp rpcinc
+local torts jsl pcap necap apology
+local atorts pcap necap apology
+jwdid malp_np , ivar(stfips) tvar(year) gvar(FPA_FULL_YEAR) method(poisson)
+qui gen first_treat = FPA_FULL_YEAR
+qui replace first_treat = 0 if first_treat == .
+csdid malp_np , ivar(stfips) time(year) gvar(first_treat)
+
+use https://friosavila.github.io/playingwithstata/drdid/mpdta.dta, clear
+gen emp=exp(lemp)
+jwdid  emp lpop, ivar(countyreal) tvar(year) gvar(first_treat) method(poisson)
+estat event
+
+	// create the results matrix
+matrix A = J(4, 3, .z)
+
+// now fill the matrix
+local row = 1
+foreach y in MRtb MRn {
+    diagt fastib `y'
+    matrix A[`row', 1] = r(sens)
+    matrix A[`row', 2] = r(spec)
+    local ++row
+}
+
+
+postfile margin b se z pvalue ll ul using prueba, replace 
+	estimates restore model2
+	margins, dydx(1.c13f2019) subpop(if c13f2019== 1)  noestimcheck vce(uncond)
+	noi di _dup(80) "-"
+
+post margin (`b') (`se') (`z') (`pvalue') (`ll') (`ul')
+postclose margin
+use prueba, clear
+list
+
+
+
+numlist "1/14"
+local y1 = "`r(numlist)'"
+local n : word count `y1'
+levelsof FPA_FULL_YEAR, local(y2)
+postfile DyDx_mlp cohort time b se z pvalue ll ul using DyDx_mlp, replace 
+ forvalues i = 1/`n' {
+      local a : word `i' of `y1'
+      local b : word `i' of `y2'
+	  di "Estimating Average Marginal Effects - Cohort `a'" _cont
+	  forvalues j = `b'/2019{
+	  	qui estimates restore model2
+		qui margins, dydx(1.c`a'f`j') subpop(if c`a'f`j'== 1) noestimcheck vce(uncond)
+		local b = r(table)[1,2]
+		local se = r(table)[2,2]
+		local z = r(table)[3,2]
+		local pvalue = r(table)[4,2]
+		local ll = r(table)[5,2]
+		local ul = r(table)[6,2]
+		post DyDx_mlp (`a') (`j') (`b') (`se') (`z') (`pvalue') (`ll') (`ul')
+		di "." _cont
+	  }
+	  	noi di _dup(10) "." _cont
+		di "Done" _cont 	
+		noi di _dup(1) "!"
+   }
+postclose DyDx_mlp
+
+
+
+numlist "1/14"
+local y1 = "`r(numlist)'"
+local n : word count `y1'
+levelsof FPA_FULL_YEAR, local(y2)
+postfile EyDx_mlp cohort time b se z pvalue ll ul using EyDx_mlp, replace 
+ forvalues i = 1/`n' {
+      local a : word `i' of `y1'
+      local b : word `i' of `y2'
+	  di "Estimating Predicted Number of Events - Cohort `a'" _cont
+	  forvalues j = `b'/2019{
+	  	qui estimates restore model2
+		qui margins, eydx(1.c`a'f`j') subpop(if c`a'f`j'== 1) noestimcheck vce(uncond)
+		local b = r(table)[1,2]
+		local se = r(table)[2,2]
+		local z = r(table)[3,2]
+		local pvalue = r(table)[4,2]
+		local ll = r(table)[5,2]
+		local ul = r(table)[6,2]
+		post EyDx_mlp (`a') (`j') (`b') (`se') (`z') (`pvalue') (`ll') (`ul')
+		di "." _cont
+	  }
+	  	noi di _dup(10) "." _cont
+		di "Done" _cont 	
+		noi di _dup(1) "!"
+   }
+postclose EyDx_mlp
+
+
+eydx
+
+use EyDx_mlp, clear
+list
+use EyDx_mlp_phys, clear
+list
+
+jwdid 
 
 log close
